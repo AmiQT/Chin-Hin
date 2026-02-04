@@ -49,12 +49,14 @@ class OCRService:
             return self._client
         
         settings = get_settings()
-        if not settings.gemini_api_key:
-            logger.warning("⚠️ GEMINI_API_KEY not configured for Multimodal Extraction!")
+        api_keys = settings.gemini_api_key_list
+        if not api_keys:
+            logger.warning("⚠️ No Gemini API keys configured for Multimodal Extraction!")
             return None
         
         try:
-            self._client = genai.Client(api_key=settings.gemini_api_key)
+            # Use the first available key for now (rotation handled primarily in chat)
+            self._client = genai.Client(api_key=api_keys[0])
             self._initialized = True
             logger.info("✅ Gemini Client initialized for Multimodal Extraction")
             return self._client

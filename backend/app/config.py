@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+from typing import List
 
 
 class Settings(BaseSettings):
@@ -23,19 +24,26 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = ""  # Service role for backend operations
     
     # Gemini AI
-    gemini_api_key: str = ""  # Primary key
-    gemini_api_key_2: str = ""  # Fallback key 2
-    gemini_api_key_3: str = ""  # Fallback key 3
+    # Individual keys (Legacy/Manual)
+    gemini_api_key: str = ""
+    gemini_api_key_2: str = ""
+    gemini_api_key_3: str = ""
+    
+    # NEW: Comma-separated list for easy rotation (GEMINI_API_KEYS)
+    gemini_api_keys: str = "" 
     
     @property
-    def gemini_api_keys(self) -> list:
+    def gemini_api_key_list(self) -> List[str]:
         """Get list of available API keys for rotation."""
-        keys = [self.gemini_api_key]
-        if self.gemini_api_key_2:
-            keys.append(self.gemini_api_key_2)
-        if self.gemini_api_key_3:
-            keys.append(self.gemini_api_key_3)
-        return [k for k in keys if k]  # Filter empty
+        # 1. Try plural key string first (from GEMINI_API_KEYS env var)
+        if self.gemini_api_keys:
+            keys = [k.strip() for k in self.gemini_api_keys.split(",") if k.strip()]
+            if keys:
+                return keys
+                
+        # 2. Fallback to individual keys
+        keys = [self.gemini_api_key, self.gemini_api_key_2, self.gemini_api_key_3]
+        return [k for k in keys if k]  # Filter empty strings
     
     # Google Vision (OCR)
     google_cloud_project: str = ""

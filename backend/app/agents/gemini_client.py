@@ -52,12 +52,14 @@ def get_gemini_client() -> Optional[genai.Client]:
         return _client
     
     settings = get_settings()
+    api_keys = settings.gemini_api_key_list
     
-    if not settings.gemini_api_key:
-        logger.warning("⚠️ GEMINI_API_KEY not configured!")
+    if not api_keys:
+        logger.warning("⚠️ No Gemini API keys configured!")
         return None
     
-    _client = genai.Client(api_key=settings.gemini_api_key)
+    # Use first key for general client, rotation is handled in function_agent for chat
+    _client = genai.Client(api_key=api_keys[0])
     logger.info("✅ Gemini client initialized")
     return _client
 

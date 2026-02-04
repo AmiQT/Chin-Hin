@@ -853,7 +853,7 @@ def get_next_model_config():
     global _current_model_index, _current_key_index
     
     settings = get_settings()
-    api_keys = settings.gemini_api_keys
+    api_keys = settings.gemini_api_key_list
     
     if not api_keys:
         raise ValueError("No Gemini API keys configured!")

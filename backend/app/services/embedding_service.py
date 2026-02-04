@@ -23,12 +23,13 @@ class EmbeddingService:
             return self._client
         
         settings = get_settings()
-        if not settings.gemini_api_key:
-            logger.warning("⚠️ GEMINI_API_KEY not configured!")
+        api_keys = settings.gemini_api_key_list
+        if not api_keys:
+            logger.warning("⚠️ No Gemini API keys configured for Embeddings!")
             return None
         
         try:
-            self._client = genai.Client(api_key=settings.gemini_api_key)
+            self._client = genai.Client(api_key=api_keys[0])
             return self._client
         except Exception as e:
             logger.error(f"❌ Failed to initialize Gemini client: {e}")
