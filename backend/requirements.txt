@@ -9,8 +9,9 @@ email-validator>=2.0.0
 # Supabase
 supabase>=2.3.0
 
-# AI - Google Gemini (new SDK)
+# AI - Google Gemini
 google-genai>=1.0.0
+google-generativeai>=0.8.0
 
 # LangChain + LangGraph (Super Agentic!) 🤖
 langchain>=0.3.0
