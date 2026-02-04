@@ -17,8 +17,21 @@ set -e  # Exit on error
 echo "🚀 Starting Deployment..."
 START_TIME=$(date +%s)
 
-# Navigate to project directory
-cd ~/chin-hin-backend || cd "$(dirname "$0")/.."
+# Navigate to project directory (where docker-compose.yml is)
+# We handle both: root or inside backend folder
+if [ -f "./docker-compose.yml" ]; then
+    echo "📍 Already in directory with docker-compose.yml"
+elif [ -d "backend" ] && [ -f "backend/docker-compose.yml" ]; then
+    echo "📂 Moving into backend directory..."
+    cd backend
+else
+    PROJECT_ROOT=~/chin-hin-backend
+    if [ -d "$PROJECT_ROOT/backend" ]; then
+        cd "$PROJECT_ROOT/backend"
+    else
+        cd "$PROJECT_ROOT"
+    fi
+fi
 
 # Pull latest code (if using git)
 if [ -d ".git" ]; then
