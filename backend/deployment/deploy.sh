@@ -19,6 +19,7 @@ START_TIME=$(date +%s)
 
 # Navigate to project directory (where docker-compose.yml is)
 # We handle both: root or inside backend folder
+# Note: 'version' field in docker-compose.yml is obsolete in newer Docker Compose.
 if [ -f "./docker-compose.yml" ]; then
     echo "📍 Already in directory with docker-compose.yml"
 elif [ -d "backend" ] && [ -f "backend/docker-compose.yml" ]; then
@@ -34,11 +35,15 @@ else
 fi
 
 # Pull latest code (if using git)
-if [ -d ".git" ]; then
+if [ -d ".git" ] || [ -d "../.git" ]; then
     echo "📥 Pulling latest code from Git..."
-    git pull origin main || git pull origin master
+    if [ -d "../.git" ]; then
+        (cd .. && git pull origin main || git pull origin master)
+    else
+        git pull origin main || git pull origin master
+    fi
 else
-    echo "⚠️  Not a git repository, skipping git pull"
+    echo "⚠️  Not a git repository (.git not found here or in parent), skipping git pull"
 fi
 
 # Stop and remove existing containers
