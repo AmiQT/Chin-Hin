@@ -1,0 +1,51 @@
+version: "3.8"
+
+services:
+  # ================================================
+  # BACKEND API
+  # ================================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chinhin-api
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - DEBUG=${DEBUG:-false}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+    env_file:
+      - .env
+    # Resource limits untuk t3.small (2GB RAM)
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1536M  # Leave some RAM for system
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    restart: always
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+  # ================================================
+  # REDIS (Optional - for caching)
+  # ================================================
+  # redis:
+  #   image: redis:alpine
+  #   container_name: chinhin-redis
+  #   ports:
+  #     - "6379:6379"
+  #   restart: unless-stopped
+
+networks:
+  default:
+    name: chinhin-network

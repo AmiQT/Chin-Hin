@@ -1,0 +1,18 @@
+🚀 STARTING INTEGRATED DB TESTS
+========================================
+
+[1] Testing Leave Flow...
+Initial Pending Days: 0
+✅ Created Leave Request: 5bf6c5ff-2b29-4aff-9b9d-f2f43901c7be
+🗑️ Cleaned up Leave Request
+
+[2] Testing Room Booking Flow...
+✅ Created Room Booking for Boardroom A: 6ef4eeaa-6495-4045-904a-bc00da6da275
+🗑️ Cleaned up Room Booking
+
+[3] Testing Claim Flow...
+✅ Created Claim for Transport: 934bca35-c1e8-438c-9a6c-da115161503a
+🗑️ Cleaned up Claim
+
+========================================
+✨ ALL DB FLOWS VERIFIED SUCCESSFUL!

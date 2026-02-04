@@ -1,0 +1,39 @@
+# Cloudflare Tunnel Configuration
+# 
+# Setup Instructions:
+# 1. Login to Cloudflare: cloudflared tunnel login
+# 2. Create tunnel: cloudflared tunnel create chin-hin-backend
+# 3. Copy tunnel ID and update below
+# 4. Run tunnel: cloudflared tunnel run chin-hin-backend
+# 5. Configure DNS in Cloudflare dashboard
+
+# Replace <TUNNEL_ID> with your actual tunnel ID
+tunnel: <TUNNEL_ID>
+credentials-file: /root/.cloudflared/<TUNNEL_ID>.json
+
+# Ingress rules - route traffic to FastAPI backend
+ingress:
+  # Main API routes
+  - hostname: chinhin-api.yourdomain.com  # Replace with your subdomain
+    service: http://localhost:8000
+    originRequest:
+      # Enable WebSocket support for Live Vision
+      noTLSVerify: true
+      connectTimeout: 30s
+      tlsTimeout: 10s
+      # Keep connection alive for WebSocket
+      keepAliveConnections: 10
+      keepAliveTimeout: 90s
+      # WebSocket-specific settings
+      httpHostHeader: chinhin-api.yourdomain.com
+      disableChunkedEncoding: false
+  
+  # Catch-all rule (required by Cloudflare)
+  - service: http_status:404
+
+# Optional: Warp routing for enhanced security
+# warp-routing:
+#   enabled: true
+
+# Logging
+loglevel: info
