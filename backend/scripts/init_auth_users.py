@@ -44,7 +44,7 @@ def init_auth_users():
             # so we try to create and catch error
             
             # Use admin API to create user
-            res = supabase.auth.admin.create_user({
+            _ = supabase.auth.admin.create_user({
                 "id": user["id"],
                 "email": user["email"],
                 "password": password,

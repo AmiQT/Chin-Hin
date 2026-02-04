@@ -1,8 +1,6 @@
 """Test LangGraph agent structure with mock LLM"""
 import asyncio
-from typing import Any
 from unittest.mock import AsyncMock, patch
-from app.agents.function_agent import agentic_chat
 
 async def test_with_mock():
     """Test agent with mocked Gemini API to avoid quota limits"""

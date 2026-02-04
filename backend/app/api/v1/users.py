@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
 
 from app.db.supabase_client import get_supabase_client
-from app.api.deps import get_current_user, require_hr, CurrentUser
+from app.api.deps import require_hr, CurrentUser
 
 router = APIRouter(prefix="/users", tags=["Users"])
 

@@ -13,16 +13,14 @@ Features:
 
 import logging
 import os
-from typing import TypedDict, Annotated, Sequence, Literal, Optional, Any
+from typing import TypedDict, Annotated, Sequence, Literal, Optional
 from datetime import date, datetime
-import json
 import operator
 
 # Disable google SDK internal retry BEFORE import
 os.environ["GOOGLE_API_PYTHON_CLIENT_NO_RETRY"] = "1"
 
 import google.generativeai as genai
-from google.api_core import retry as google_retry
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
@@ -442,7 +440,7 @@ def book_room(
         
         return {
             "success": True,
-            "message": f"✅ Room booked successfully!",
+            "message": "✅ Room booked successfully!",
             "details": {
                 "room": room["name"],
                 "title": title,
@@ -584,7 +582,7 @@ def submit_claim(
         
         return {
             "success": True,
-            "message": f"✅ Claim submitted!",
+            "message": "✅ Claim submitted!",
             "details": {
                 "category": cat["name"],
                 "amount": f"RM{amount:.2f}",
@@ -910,8 +908,6 @@ def reset_model_rotation():
 
 def create_agent(model_name: str = None, api_key: str = None):
     """Create the LangGraph agent with specified or default model."""
-    settings = get_settings()
-    
     # Use provided or get from rotation
     if not model_name or not api_key:
         model_name, api_key = get_next_model_config()

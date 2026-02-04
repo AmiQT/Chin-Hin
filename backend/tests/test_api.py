@@ -7,7 +7,6 @@ Tests are organized into:
 3. Error handling tests
 """
 
-import pytest
 
 
 # ================================================
@@ -58,7 +57,7 @@ class TestAuthRequired:
         response = client.get("/api/v1/users")
         assert response.status_code == 401
         data = response.json()
-        assert data["success"] == False
+        assert not data["success"]
         assert "error" in data
     
     def test_leaves_list_is_public(self, client):
@@ -98,7 +97,7 @@ class TestErrorHandling:
         response = client.get("/api/v1/nonexistent")
         assert response.status_code == 404
         data = response.json()
-        assert data["success"] == False
+        assert not data["success"]
         assert "error" in data
         assert data["error"]["code"] == "NOT_FOUND"
         assert "request_id" in data
@@ -108,7 +107,7 @@ class TestErrorHandling:
         response = client.patch("/health")  # Health only accepts GET
         assert response.status_code == 405
         data = response.json()
-        assert data["success"] == False
+        assert not data["success"]
         assert data["error"]["code"] == "METHOD_NOT_ALLOWED"
     
     def test_validation_error_format(self, client):
@@ -117,7 +116,7 @@ class TestErrorHandling:
         response = client.post("/api/v1/auth/login", json={})
         assert response.status_code == 422
         data = response.json()
-        assert data["success"] == False
+        assert not data["success"]
         assert data["error"]["code"] == "VALIDATION_ERROR"
         assert "details" in data["error"]
 

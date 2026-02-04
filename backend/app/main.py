@@ -90,7 +90,7 @@ app.include_router(live_vision_router, prefix="/api/v1/live", tags=["live"])
 async def startup_event():
     logger.info(f"🚀 {settings.app_name} starting up...")
     logger.info(f"📍 Environment: {settings.environment}")
-    logger.info(f"📊 Rate limit: 100 req/min per IP")
+    logger.info("📊 Rate limit: 100 req/min per IP")
 
     # Setup Background Tasks (Nudges)
     import asyncio

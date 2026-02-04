@@ -33,7 +33,7 @@ async def test_proactive_nudges():
     }
     # Note: This might fail if constraints are strict, but let's try
     try:
-        claim_result = supabase.table("claims").insert(claim_data).execute()
+        _ = supabase.table("claims").insert(claim_data).execute()
         print("✅ Stuck claim created!")
     except Exception as e:
         print(f"⚠️ Could not create stuck claim (maybe categories missing?): {e}")

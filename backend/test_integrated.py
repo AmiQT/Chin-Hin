@@ -1,8 +1,7 @@
 import asyncio
 import sys
-import uuid
 from pathlib import Path
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from app.db.supabase_client import get_supabase_client
 
 # Fix encoding for Windows
@@ -55,7 +54,7 @@ async def integrated_test():
         # Note: Since I fixed the code in leaves.py, if I were to use the API it should work.
         # For now, let's just delete the test data to keep it clean.
         supabase.table("leave_requests").delete().eq("id", leave_id).execute()
-        log(f"🗑️ Cleaned up Leave Request")
+        log("🗑️ Cleaned up Leave Request")
 
         # 2. Test Room Booking Flow
         log("\n[2] Testing Room Booking Flow...")
@@ -76,7 +75,7 @@ async def integrated_test():
         log(f"✅ Created Room Booking for {room_name}: {booking_id}")
         
         supabase.table("room_bookings").delete().eq("id", booking_id).execute()
-        log(f"🗑️ Cleaned up Room Booking")
+        log("🗑️ Cleaned up Room Booking")
 
         # 3. Test Claim Flow
         log("\n[3] Testing Claim Flow...")
@@ -96,7 +95,7 @@ async def integrated_test():
         log(f"✅ Created Claim for {cat_name}: {claim_id}")
         
         supabase.table("claims").delete().eq("id", claim_id).execute()
-        log(f"🗑️ Cleaned up Claim")
+        log("🗑️ Cleaned up Claim")
 
         log("\n" + "=" * 40)
         log("✨ ALL DB FLOWS VERIFIED SUCCESSFUL!")

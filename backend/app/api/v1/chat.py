@@ -1,10 +1,10 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
-from typing import Optional, List, Dict
+from typing import Optional
 from datetime import datetime
 import logging
 
-from app.agents.gemini_client import chat_completion, simple_generate
+from app.agents.gemini_client import simple_generate
 from app.agents.function_agent import agentic_chat
 from app.db.supabase_client import get_supabase_client
 from app.api.deps import get_current_user, CurrentUser
@@ -235,7 +235,7 @@ def classify_intent(message: str) -> str:
     
     # Leave related
     leave_words = ["cuti", "leave", "mc", "apply", "mohon"]
-    if any(l in message_lower for l in leave_words):
+    if any(word in message_lower for word in leave_words):
         return "apply_leave"
     
     # Claims related

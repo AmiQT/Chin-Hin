@@ -255,7 +255,7 @@ async def upload_receipt(
     if file.content_type not in allowed_types:
         raise HTTPException(
             status_code=400, 
-            detail=f"File type not supported. Allowed: JPEG, PNG, PDF"
+            detail="File type not supported. Allowed: JPEG, PNG, PDF"
         )
     
     # Read file content
@@ -282,7 +282,7 @@ async def upload_receipt(
     if receipt_data.total_amount and not claim.get("amount"):
         update_data["amount"] = receipt_data.total_amount
     
-    result = supabase.table("claims").update(update_data).eq("id", claim_id).execute()
+    _ = supabase.table("claims").update(update_data).eq("id", claim_id).execute()
     
     response_data = {
         "claim_id": claim_id,
@@ -297,7 +297,7 @@ async def upload_receipt(
     
     return {
         "success": True,
-        "message": f"Receipt uploaded and processed! 📸",
+        "message": "Receipt uploaded and processed! 📸",
         "data": response_data
     }
 
@@ -316,7 +316,7 @@ async def scan_receipt_only(
     if file.content_type not in allowed_types:
         raise HTTPException(
             status_code=400, 
-            detail=f"File type not supported. Allowed: JPEG, PNG, PDF"
+            detail="File type not supported. Allowed: JPEG, PNG, PDF"
         )
     
     # Read and process

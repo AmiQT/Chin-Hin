@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from typing import List
 from app.api.deps import get_current_user, CurrentUser
 from app.services.nudge_service import get_nudge_service

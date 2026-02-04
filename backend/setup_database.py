@@ -24,13 +24,13 @@ def run_migration(filename: str):
         # Execute via raw SQL (Supabase REST API limitation, so we'll try table by table)
         # For full migration, better run via Supabase SQL Editor
         # But we can verify tables exist after manual run
-        result = supabase.rpc("exec", {"sql": sql}).execute()
+        _ = supabase.rpc("exec", {"sql": sql}).execute()
         print(f"✅ {filename} completed!")
         return True
     except Exception as e:
         print(f"⚠️ Cannot run via REST API: {e}")
-        print(f"💡 Please run this SQL in Supabase SQL Editor:")
-        print(f"   https://supabase.com/dashboard/project/nlerjwllnvrpfujuxjnp/editor")
+        print("💡 Please run this SQL in Supabase SQL Editor:")
+        print("   https://supabase.com/dashboard/project/nlerjwllnvrpfujuxjnp/editor")
         print(f"\n📋 Copy from: {migration_path}")
         return False
 
@@ -56,7 +56,7 @@ def verify_setup():
         try:
             result = supabase.table(table).select("id").limit(1).execute()
             print(f"✅ {table:20} - OK (rows: {len(result.data)})")
-        except Exception as e:
+        except Exception:
             print(f"❌ {table:20} - MISSING or ERROR")
             return False
     
@@ -85,7 +85,7 @@ def show_test_user():
                 "*, leave_types(name)"
             ).eq("user_id", u['id']).eq("year", 2026).execute()
             
-            print(f"\n   📊 Leave Balances 2026:")
+            print("\n   📊 Leave Balances 2026:")
             for bal in balances.data:
                 lt_name = bal.get("leave_types", {}).get("name", "Unknown")
                 remaining = bal["total_days"] - bal["used_days"] - bal["pending_days"]

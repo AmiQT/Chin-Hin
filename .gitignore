@@ -1,0 +1,21 @@
+# Root level gitignore for Chin Hin project
+
+# SSH Keys (EC2, etc)
+*.pem
+*.key
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
