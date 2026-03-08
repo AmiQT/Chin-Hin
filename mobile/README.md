@@ -10,7 +10,7 @@
 | State | Riverpod 2.0 (Notifier Pattern) |
 | UI Library | ShadCN UI |
 | HTTP Client | Dio |
-| Auth | Supabase Auth |
+| Auth | Simple Token Auth (SharedPreferences) |
 | Voice | Speech-to-Text |
 | Camera | Camera + Record packages |
 
@@ -21,7 +21,7 @@ lib/
 ├── main.dart              # App entry point
 ├── config.dart            # API URL configuration
 ├── core/
-│   └── supabase_config.dart
+│   └── app_config.dart
 ├── models/
 │   └── message.dart       # Chat message model
 ├── providers/

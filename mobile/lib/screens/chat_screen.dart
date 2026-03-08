@@ -117,6 +117,40 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     });
   }
 
+  /// Returns true if the AI message text is asking the user for a date.
+  bool _asksForDate(String text) {
+    final lower = text.toLowerCase();
+    const keywords = [
+      'tarikh',
+      'date',
+      'bila',
+      'when',
+      'start date',
+      'end date',
+      'tarikh mula',
+      'tarikh tamat',
+      'tarikh akhir',
+      'hari bila',
+      'check-in',
+      'check in',
+      'pilih tarikh',
+      'masukkan tarikh',
+      'enter date',
+      'what date',
+      'which date',
+    ];
+    return keywords.any((k) => lower.contains(k));
+  }
+
+  void _fillDate(String date) {
+    setState(() {
+      _controller.text = date;
+      _controller.selection = TextSelection.fromPosition(
+        TextPosition(offset: _controller.text.length),
+      );
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final messages = ref.watch(chatProvider);
@@ -161,7 +195,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               itemCount: messages.length,
               itemBuilder: (context, index) {
                 final msg = messages[index];
-                return _buildMessageBubble(msg);
+                final isLast = index == messages.length - 1;
+                return _buildMessageBubble(msg, isLast: isLast);
               },
             ),
           ),
@@ -247,8 +282,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     ).animate().fadeIn(duration: 300.ms);
   }
 
-  Widget _buildMessageBubble(Message msg) {
-    bool isLeaveConfirmation = !msg.isUser && msg.text.contains("Confirm");
+  Widget _buildMessageBubble(Message msg, {bool isLast = false}) {
+    final showDatePicker = isLast && !msg.isUser && _asksForDate(msg.text);
 
     return Align(
       alignment: msg.isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -313,31 +348,136 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             ),
           ).animate().fade().scale(),
 
-          if (isLeaveConfirmation)
-            SizedBox(
-              width: MediaQuery.of(context).size.width * 0.75,
-              child: LeaveConfirmationCard(
-                date: "Tomorrow",
-                type: "Annual Leave",
-                isDisabled: msg.actionExecuted,
-                onConfirm: () {
-                  if (!msg.actionExecuted) {
-                    setState(() => msg.actionExecuted = true);
-                    ref
-                        .read(chatProvider.notifier)
-                        .sendMessage("Yes, confirm apply.");
-                  }
-                },
-                onCancel: () {
-                  if (!msg.actionExecuted) {
-                    setState(() => msg.actionExecuted = true);
-                    ref
-                        .read(chatProvider.notifier)
-                        .sendMessage("Cancel request.");
-                  }
-                },
-              ),
-            ).animate().slideY(begin: 0.2, end: 0, duration: 400.ms).fade(),
+          // ── Date picker bar (auto-shown kalau AI tanya tarikh) ──
+          if (showDatePicker)
+            DatePickerBar(onDatePicked: (date) => _fillDate(date)),
+
+          if (msg.actions != null && msg.actions!.isNotEmpty)
+            ...msg.actions!.map((action) {
+              final type = action['type'] as String? ?? '';
+              final tool = action['tool'] as String?;
+              final args = Map<String, dynamic>.from(
+                action['args'] as Map? ?? {},
+              );
+              final fullWidth = MediaQuery.of(context).size.width - 32;
+
+              // ── Sensitive tool: confirmation card ──
+              if (tool != null &&
+                  (tool == 'apply_leave' ||
+                      tool == 'book_room' ||
+                      tool == 'book_transport')) {
+                return SizedBox(
+                  width: MediaQuery.of(context).size.width * 0.85,
+                  child: ActionConfirmationCard(
+                    tool: tool,
+                    args: args,
+                    isDisabled: msg.actionExecuted,
+                    onConfirm: () {
+                      if (!msg.actionExecuted) {
+                        setState(() => msg.actionExecuted = true);
+                        ref.read(chatProvider.notifier).sendMessage('Confirm');
+                      }
+                    },
+                    onCancel: () {
+                      if (!msg.actionExecuted) {
+                        setState(() => msg.actionExecuted = true);
+                        ref.read(chatProvider.notifier).sendMessage('Cancel');
+                      }
+                    },
+                  ),
+                );
+              }
+
+              // ── Leave balance card ──
+              if (type == 'leave_balance_card') {
+                return SizedBox(
+                  width: fullWidth,
+                  child: LeaveBalanceCard(
+                    balances: Map<String, dynamic>.from(
+                      action['balances'] as Map? ?? {},
+                    ),
+                    quickReplies: List<String>.from(
+                      action['quick_replies'] as List? ?? [],
+                    ),
+                    onQuickReply: (reply) =>
+                        ref.read(chatProvider.notifier).sendMessage(reply),
+                  ),
+                );
+              }
+
+              // ── Vehicle picker card ──
+              if (type == 'vehicle_picker') {
+                return SizedBox(
+                  width: fullWidth,
+                  child: VehiclePickerCard(
+                    vehicles: (action['vehicles'] as List? ?? [])
+                        .map((v) => Map<String, dynamic>.from(v as Map))
+                        .toList(),
+                    isDisabled: msg.actionExecuted,
+                    onSelect: (vehicle) {
+                      if (!msg.actionExecuted) {
+                        setState(() => msg.actionExecuted = true);
+                        ref
+                            .read(chatProvider.notifier)
+                            .sendMessage('Nak book $vehicle');
+                      }
+                    },
+                  ),
+                );
+              }
+
+              // ── Menu card ──
+              if (type == 'menu_card') {
+                return SizedBox(
+                  width: fullWidth,
+                  child: MenuCard(
+                    day: action['day'] as String? ?? '',
+                    menu: action['menu'] as String? ?? '',
+                  ),
+                );
+              }
+
+              // ── Energy card ──
+              if (type == 'energy_card') {
+                return SizedBox(
+                  width: fullWidth,
+                  child: EnergyCard(
+                    currentMonth: action['current_month'] as String? ?? '',
+                    currentUsage:
+                        (action['current_usage'] as num?)?.toInt() ?? 0,
+                    allStats: Map<String, dynamic>.from(
+                      action['all_stats'] as Map? ?? {},
+                    ),
+                  ),
+                );
+              }
+
+              // ── Claims card ──
+              if (type == 'claims_card') {
+                return SizedBox(
+                  width: fullWidth,
+                  child: ClaimsCard(
+                    claims: List.from(action['claims'] as List? ?? []),
+                  ),
+                );
+              }
+
+              // ── Generic quick replies ──
+              if (type == 'quick_replies') {
+                return Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: QuickRepliesRow(
+                    replies: List<String>.from(
+                      action['replies'] as List? ?? [],
+                    ),
+                    onTap: (reply) =>
+                        ref.read(chatProvider.notifier).sendMessage(reply),
+                  ),
+                );
+              }
+
+              return const SizedBox.shrink();
+            }),
 
           const SizedBox(height: 16),
         ],

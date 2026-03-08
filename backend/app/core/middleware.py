@@ -41,8 +41,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Prevent referrer leakage
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         
-        # Content Security Policy (basic)
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+        # Content Security Policy - allow Swagger UI CDN resources
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self' https://cdn.jsdelivr.net https://fastapi.tiangolo.com; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "img-src 'self' data: https://fastapi.tiangolo.com https://cdn.jsdelivr.net;"
+        )
         
         # Permissions Policy (previously Feature-Policy)
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"

@@ -3,16 +3,14 @@
 /// ==============================================================================
 ///
 /// Entry point for the Chin Hin Employee AI Assistant mobile app.
-/// Initializes Supabase and sets up Riverpod provider scope.
-/// Handles auth-based navigation between Login and Home screens.
+/// Sets up Riverpod provider scope dan handles auth-based navigation.
 /// ==============================================================================
 library;
 
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'core/supabase_config.dart';
+import 'config.dart';
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
@@ -20,11 +18,6 @@ import 'providers/user_provider.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  await Supabase.initialize(
-    url: SupabaseConfig.url,
-    anonKey: SupabaseConfig.anonKey,
-  );
 
   runApp(const ProviderScope(child: ChinHinAIApp()));
 }

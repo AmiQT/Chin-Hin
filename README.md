@@ -2,7 +2,7 @@
   <img src="https://img.shields.io/badge/Flutter-3.x-02569B?logo=flutter&logoColor=white" alt="Flutter"/>
   <img src="https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white" alt="FastAPI"/>
   <img src="https://img.shields.io/badge/Gemini-2.5_Flash-4285F4?logo=google&logoColor=white" alt="Gemini"/>
-  <img src="https://img.shields.io/badge/Supabase-Postgres-3FCF8E?logo=supabase&logoColor=white" alt="Supabase"/>
+  <img src="https://img.shields.io/badge/FastAPI-Python-009688?logo=fastapi&logoColor=white" alt="FastAPI"/>
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License"/>
 </p>
 
@@ -79,8 +79,8 @@
 <tr><td>🤖 AI Engine</td><td>Gemini 2.5 Flash + LangGraph</td><td>Conversational AI</td></tr>
 <tr><td>👁️ Live Vision</td><td>Gemini 2.0 Flash</td><td>Real-time multimodal</td></tr>
 <tr><td>📚 RAG</td><td>Gemini Embeddings + pgvector</td><td>HR policy retrieval</td></tr>
-<tr><td>🗄️ Database</td><td>Supabase (PostgreSQL)</td><td>Data persistence</td></tr>
-<tr><td>🔐 Auth</td><td>Supabase Auth</td><td>JWT authentication</td></tr>
+<tr><td>🗄️ Database</td><td>In-Memory / Local Mock</td><td>Data persistence (dev mode)</td></tr>
+<tr><td>🔐 Auth</td><td>Simple Token Auth</td><td>JWT-style authentication</td></tr>
 <tr><td>📱 Mobile</td><td>Flutter + Riverpod + ShadCN UI</td><td>Cross-platform app</td></tr>
 <tr><td>☁️ Deploy</td><td>AWS EC2 / Azure Container Apps</td><td>Cloud hosting</td></tr>
 </table>
@@ -120,8 +120,7 @@ Chin Hin/
 # Required
 ✅ Python 3.11+
 ✅ Flutter SDK 3.x
-✅ Supabase Account
-✅ Gemini API Key
+✅ Azure OpenAI API Key
 ```
 
 ### Backend Setup
@@ -180,12 +179,10 @@ flutter run
 Create `backend/.env`:
 
 ```env
-# Supabase
-SUPABASE_URL=https://xxx.supabase.co
-SUPABASE_KEY=your-supabase-key
-
-# Gemini AI
-GEMINI_API_KEY=your-gemini-key
+# Azure OpenAI
+AZURE_OPENAI_API_KEY=your-azure-key
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_DEPLOYMENT=gpt-4o-mini
 ```
 
 ---
@@ -195,7 +192,7 @@ GEMINI_API_KEY=your-gemini-key
 | Phase | Description | Status |
 |:-----:|-------------|:------:|
 | 1 | Project Setup | ✅ |
-| 2 | Database (Supabase) | ✅ |
+| 2 | Auth & Mock Data | ✅ |
 | 3 | Basic REST API | ✅ |
 | 4 | AI Engine (RAG + Multimodal) | ✅ |
 | 5 | Proactive Nudges | ✅ |

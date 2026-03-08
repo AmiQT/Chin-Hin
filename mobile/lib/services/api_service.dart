@@ -3,7 +3,7 @@
 /// ==============================================================================
 ///
 /// HTTP client wrapper for all backend API communications.
-/// Auto-attaches JWT token from Supabase session to all requests.
+/// Auto-attaches stored JWT token to all requests.
 ///
 /// Endpoint categories:
 /// - Chat: AI message handling with multimodal support
@@ -15,7 +15,7 @@
 library;
 
 import 'package:dio/dio.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../config.dart';
 
 class ApiService {
@@ -36,10 +36,15 @@ class ApiService {
 
     _dio.interceptors.add(
       InterceptorsWrapper(
-        onRequest: (options, handler) {
-          final session = Supabase.instance.client.auth.currentSession;
-          if (session != null) {
-            options.headers['Authorization'] = 'Bearer ${session.accessToken}';
+        onRequest: (options, handler) async {
+          if (Config.isLocal) {
+            options.headers['Authorization'] = 'Bearer local-test-token';
+            return handler.next(options);
+          }
+          final prefs = await SharedPreferences.getInstance();
+          final token = prefs.getString('auth_token');
+          if (token != null) {
+            options.headers['Authorization'] = 'Bearer $token';
           }
           return handler.next(options);
         },
@@ -52,6 +57,7 @@ class ApiService {
     required String userId,
     String? conversationId,
     String? imageData,
+    List<Map<String, dynamic>>? history,
   }) async {
     try {
       final response = await _dio.post(
@@ -61,6 +67,7 @@ class ApiService {
           'user_id': userId,
           if (conversationId != null) 'conversation_id': conversationId,
           if (imageData != null) 'image_data': imageData,
+          if (history != null && history.isNotEmpty) 'history': history,
         },
       );
 
@@ -101,6 +108,9 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> getLeaveBalance(String userId) async {
+    if (Config.isLocal) {
+      return {"Annual": 12, "Medical": 14, "Emergency": 5};
+    }
     try {
       final response = await _dio.get('/api/v1/leaves/balance');
       return response.data;
@@ -110,6 +120,9 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> getMyLeaves(String userId) async {
+    if (Config.isLocal) {
+      return {"count": 2, "requests": []};
+    }
     try {
       final response = await _dio.get('/api/v1/users/$userId/leaves');
       return response.data;
@@ -152,6 +165,9 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> getMyClaims(String userId) async {
+    if (Config.isLocal) {
+      return {"count": 1, "claims": []};
+    }
     try {
       final response = await _dio.get('/api/v1/users/$userId/claims');
       return response.data;
@@ -227,6 +243,9 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> getMyBookings(String userId) async {
+    if (Config.isLocal) {
+      return {"count": 3, "bookings": []};
+    }
     try {
       final response = await _dio.get(
         '/api/v1/rooms/bookings/all',

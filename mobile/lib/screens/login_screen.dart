@@ -3,7 +3,7 @@
 /// ==============================================================================
 ///
 /// Authentication screen supporting sign-in and sign-up flows.
-/// Handles email/password validation and Supabase auth via [userProvider].
+/// Handles email/password validation dan backend auth via [userProvider].
 /// ==============================================================================
 library;
 

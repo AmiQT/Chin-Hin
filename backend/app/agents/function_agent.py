@@ -1,1216 +1,546 @@
 """
-🔥 SUPER AGENTIC AI - Chin Hin Employee Assistant
-Uses LangGraph for stateful, multi-step reasoning with loops.
-
-Features:
-- Multi-step reasoning with ReAct pattern
-- Conversation memory
-- Error recovery & retry
-- Clarification loops
-- Complex query handling
-- Model rotation on quota errors
+🔥 AGENTIC AI - Chin Hin Employee Assistant
+Implementation with Chain of Thought (CoT) and Human-in-the-Loop (HITL).
+Uses Local Mock Data for testing (bypassing Supabase for now).
 """
 
 import logging
-import os
-from typing import TypedDict, Annotated, Sequence, Literal, Optional
-from datetime import date, datetime
-import operator
+from typing import Optional, List, Dict, Any
+import json
+from datetime import datetime
+from contextvars import ContextVar
 
-# Disable google SDK internal retry BEFORE import
-os.environ["GOOGLE_API_PYTHON_CLIENT_NO_RETRY"] = "1"
-
-import google.generativeai as genai
-
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
-from langchain_core.tools import tool
-from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode
-from langgraph.checkpoint.memory import MemorySaver
-
+from openai import AzureOpenAI, BadRequestError
 from app.config import get_settings
-from app.db.supabase_client import get_supabase_client
+from app.services.data_store import get_store
+
+# Current user context — set in agentic_chat before calling process_chat
+_user_ctx: ContextVar[str] = ContextVar("user_id", default="dev-user")
 
 logger = logging.getLogger(__name__)
 
-
 # ================================================
-# STATE DEFINITION
-# ================================================
-
-class AgentState(TypedDict):
-    """State for the agent graph."""
-    messages: Annotated[Sequence[BaseMessage], operator.add]
-    user_id: str
-    actions_taken: list
-    retry_count: int
-    needs_clarification: bool
-    clarification_question: str
-
-
-# ================================================
-# TOOLS - Super powered! 🔧
+# TOOL FUNCTIONS
+# Data comes from InMemoryStore (data_store.py) — no hardcoded values here.
+# User identity is injected via _user_ctx ContextVar set in agentic_chat().
 # ================================================
 
-@tool
-def get_leave_balance(user_id: str) -> dict:
-    """
-    Get user's leave balance for current year.
-    Call this when user asks about remaining leave, cuti balance, or baki cuti.
-    
-    Args:
-        user_id: The user's UUID
-    
-    Returns:
-        Dictionary with leave balances by type including remaining days
-    """
+# ================================================
+# TOOLS (MOCK FUNCTIONS)
+# ================================================
+
+def get_all_leave_balances() -> str:
+    """Return ALL leave balances at once — guna bila user tanya secara umum."""
+    store = get_store()
+    uid = _user_ctx.get()
+    balances = store.get_leave_balances(uid)
+    lines = [f"- {k}: {v} hari" for k, v in balances.items()]
+    return "Baki cuti kau:\n" + "\n".join(lines)
+
+def check_leave_balance(leave_type: str = "Annual") -> str:
+    store = get_store()
+    uid = _user_ctx.get()
+    balance = store.get_leave_balance(uid, leave_type)
+    return f"Baki cuti {leave_type} kau ada {balance} hari lagi bro. 🌴"
+
+def apply_leave(leave_type: str, start_date: str, end_date: str, reason: str) -> str:
     try:
-        supabase = get_supabase_client()
-        year = datetime.now().year
-        
-        types_result = supabase.table("leave_types").select("*").eq("is_active", True).execute()
-        
-        balances = []
-        total_remaining = 0
-        for leave_type in types_result.data:
-            balance_result = supabase.table("leave_balances").select("*").eq(
-                "user_id", user_id
-            ).eq("leave_type_id", leave_type["id"]).eq("year", year).execute()
-            
-            if balance_result.data:
-                balance = balance_result.data[0]
-            else:
-                balance = {
-                    "total_days": leave_type.get("default_days", 14),
-                    "used_days": 0,
-                    "pending_days": 0
+        d1 = datetime.strptime(start_date, "%Y-%m-%d")
+        d2 = datetime.strptime(end_date, "%Y-%m-%d")
+        total_days = max(1, (d2 - d1).days + 1)  # inclusive, minimum 1
+    except Exception:
+        total_days = 1
+    store = get_store()
+    uid = _user_ctx.get()
+    new_balance = store.deduct_leave(uid, leave_type, total_days)
+    store.add_leave_application(uid, leave_type, start_date, end_date, reason, total_days)
+    return f"Cun! Cuti {leave_type} dari {start_date} ke {end_date} ({total_days} hari) dah didaftarkan! Baki baru: {new_balance} hari. 🤞"
+
+def check_room_availability(room_name: str, date: str, start_time: str, end_time: str) -> str:
+    store = get_store()
+    available = store.is_room_available(room_name, date, start_time, end_time)
+    if available:
+        return f"Bilik {room_name} available pada {date} ({start_time}-{end_time}). Nak book terus? 🏢✅"
+    existing = store.get_room_bookings(room_name, date)
+    taken_slots = ", ".join(f"{b['start_time']}-{b['end_time']}" for b in existing)
+    return f"Bilik {room_name} dah ada booking pada {date} untuk slot {taken_slots}. Cuba masa atau bilik lain? 🏢⚠️"
+
+def book_room(room_name: str, date: str, start_time: str, end_time: str, purpose: str) -> str:
+    store = get_store()
+    uid = _user_ctx.get()
+    if not store.is_room_available(room_name, date, start_time, end_time):
+        return f"Alamak, bilik {room_name} dah clash dengan booking lain pada {date} ({start_time}-{end_time}). Cuba slot atau bilik lain! 🏢❌"
+    record = store.add_room_booking(uid, room_name, date, start_time, end_time, purpose)
+    return f"Settled! Bilik {room_name} dah dibooking (ID: {record['id']}) pada {date} ({start_time}-{end_time}). 🗓️✅"
+
+def check_claim_status() -> str:
+    store = get_store()
+    uid = _user_ctx.get()
+    pending = store.get_claims(uid, status="pending")
+    all_claims = store.get_claims(uid)
+    if not pending:
+        total = len(all_claims)
+        if total == 0:
+            return "Kau takde claim langsung lagi. Nak submit claim baru? 💸"
+        return f"Semua {total} claim kau dah setel! Takde yang pending. 💸✅"
+    total_pending = sum(c["amount"] for c in pending)
+    return f"Kau ada {len(pending)} claim pending (jumlah RM{total_pending:.2f}). Claim terkini: RM{pending[-1]['amount']:.2f} untuk {pending[-1]['type']}. 💸"
+
+def get_transport_options() -> str:
+    store = get_store()
+    fleet = store.transport_fleet
+    options = ", ".join(f"{v['type']} ({v['capacity']})" for v in fleet)
+    return f"Kita ada {options}. Semua ready to go! 🚐💨"
+
+def book_transport(vehicle_type: str, destination: str, date: str, time: str, reason: str) -> str:
+    store = get_store()
+    uid = _user_ctx.get()
+    record = store.add_transport_booking(uid, vehicle_type, destination, date, time, reason)
+    return f"Onz! Transport {vehicle_type} ke {destination} pada {date} ({time}) dah dibooking (ID: {record['id']})! Driver akan contact kau nanti. 🚐✨"
+
+def get_daily_menu() -> str:
+    store = get_store()
+    today = datetime.now().strftime("%A")
+    menu = store.daily_menu.get(today, "Menu belum update untuk hari ni. 😋")
+    return f"Menu Cafe Chin Hin harini ({today}): **{menu}**. Jemput makan bro! 🍛"
+
+def get_energy_consumption(month: str = "March") -> str:
+    store = get_store()
+    usage = store.energy_stats.get(month, 0)
+    if usage == 0:
+        return f"Data energy untuk bulan {month} belum ada lagi. ⚡"
+    return f"Usage energy office bulan {month} adalah {usage} kWh. Jimat sikit aircond tu k? ⚡🔋"
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_all_leave_balances",
+            "description": "Get ALL leave balances (Annual, Medical, Emergency) at once. Use this when user asks 'berapa cuti aku ada', 'check cuti', 'leave balance' or any general leave inquiry WITHOUT specifying a type. Do NOT ask for leave type — just call this immediately."
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_leave_balance",
+            "description": "Check leave days for ONE specific leave type. Only use if user EXPLICITLY mentions a specific type (Annual/Medical/Emergency).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "leave_type": {"type": "string", "enum": ["Annual", "Medical", "Emergency"]}
                 }
-            
-            remaining = balance["total_days"] - balance["used_days"] - balance["pending_days"]
-            total_remaining += remaining
-            balances.append({
-                "type": leave_type["name"],
-                "total": balance["total_days"],
-                "used": balance["used_days"],
-                "pending": balance["pending_days"],
-                "remaining": remaining
-            })
-        
-        return {
-            "success": True, 
-            "balances": balances,
-            "summary": f"Total remaining leave: {total_remaining} days"
+            }
         }
-    except Exception as e:
-        logger.error(f"get_leave_balance error: {e}")
-        return {"success": False, "error": str(e)}
-
-
-@tool
-def apply_leave(
-    user_id: str,
-    leave_type: str,
-    start_date: str,
-    end_date: str,
-    reason: str = ""
-) -> dict:
-    """
-    Apply for leave on behalf of user. 
-    Call this when user wants to apply cuti, mohon cuti, or request leave.
-    
-    Args:
-        user_id: The user's UUID
-        leave_type: Type of leave - Annual, MC (medical), Emergency, Unpaid
-        start_date: Start date in YYYY-MM-DD format
-        end_date: End date in YYYY-MM-DD format  
-        reason: Optional reason for leave
-    
-    Returns:
-        Result with success status and leave details
-    """
-    try:
-        supabase = get_supabase_client()
-        
-        # Find leave type
-        type_result = supabase.table("leave_types").select("*").ilike("name", f"%{leave_type}%").execute()
-        if not type_result.data:
-            available = supabase.table("leave_types").select("name").execute()
-            types_list = [t["name"] for t in available.data]
-            return {
-                "success": False, 
-                "error": f"Leave type '{leave_type}' not found",
-                "available_types": types_list,
-                "suggestion": "Please specify one of the available leave types"
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "apply_leave",
+            "description": "Apply for leave. SENSITIVE: Needs confirmation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "leave_type": {"type": "string"},
+                    "start_date": {"type": "string"},
+                    "end_date": {"type": "string"},
+                    "reason": {"type": "string"}
+                },
+                "required": ["leave_type", "start_date", "end_date", "reason"]
             }
-        
-        leave_type_id = type_result.data[0]["id"]
-        leave_type_name = type_result.data[0]["name"]
-        
-        # Parse and validate dates
-        try:
-            start = datetime.strptime(start_date, "%Y-%m-%d").date()
-            end = datetime.strptime(end_date, "%Y-%m-%d").date()
-        except ValueError:
-            return {
-                "success": False,
-                "error": "Invalid date format. Please use YYYY-MM-DD format",
-                "suggestion": "Example: 2026-02-01"
-            }
-        
-        total_days = (end - start).days + 1
-        
-        if total_days <= 0:
-            return {"success": False, "error": "End date must be after start date"}
-        
-        if start < date.today():
-            return {"success": False, "error": "Cannot apply leave for past dates"}
-        
-        # Check balance
-        year = datetime.now().year
-        balance_result = supabase.table("leave_balances").select("*").eq(
-            "user_id", user_id
-        ).eq("leave_type_id", leave_type_id).eq("year", year).execute()
-        
-        if balance_result.data:
-            balance = balance_result.data[0]
-            remaining = balance["total_days"] - balance["used_days"] - balance["pending_days"]
-            if total_days > remaining:
-                return {
-                    "success": False, 
-                    "error": f"Insufficient {leave_type_name} balance!",
-                    "requested": total_days,
-                    "remaining": remaining,
-                    "suggestion": f"You only have {remaining} days. Consider applying for fewer days or different leave type."
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_room_availability",
+            "description": "Check if a room is available.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "room_name": {"type": "string"},
+                    "date": {"type": "string"},
+                    "start_time": {"type": "string"},
+                    "end_time": {"type": "string"}
                 }
-            
-            # Update pending days
-            supabase.table("leave_balances").update({
-                "pending_days": balance["pending_days"] + total_days
-            }).eq("id", balance["id"]).execute()
-        
-        # Create leave request
-        new_leave = {
-            "user_id": user_id,
-            "leave_type_id": leave_type_id,
-            "start_date": start_date,
-            "end_date": end_date,
-            "total_days": total_days,
-            "reason": reason,
-            "status": "pending"
-        }
-        
-        result = supabase.table("leave_requests").insert(new_leave).execute()
-        
-        return {
-            "success": True,
-            "message": f"✅ {leave_type_name} leave applied successfully!",
-            "details": {
-                "type": leave_type_name,
-                "start": start_date,
-                "end": end_date,
-                "days": total_days,
-                "status": "pending",
-                "leave_id": result.data[0]["id"] if result.data else None
             }
         }
-    except Exception as e:
-        logger.error(f"apply_leave error: {e}")
-        return {"success": False, "error": str(e)}
-
-
-@tool
-def get_my_leaves(user_id: str, status: str = "all") -> dict:
-    """
-    Get user's leave requests history.
-    Call when user asks about their leave history, pending leaves, or past requests.
-    
-    Args:
-        user_id: The user's UUID
-        status: Filter by status - all, pending, approved, rejected
-    
-    Returns:
-        List of leave requests with details
-    """
-    try:
-        supabase = get_supabase_client()
-        
-        query = supabase.table("leave_requests").select(
-            "*, leave_types(name)"
-        ).eq("user_id", user_id).order("created_at", desc=True).limit(10)
-        
-        if status != "all":
-            query = query.eq("status", status)
-        
-        result = query.execute()
-        
-        leaves = []
-        for leave in result.data:
-            leaves.append({
-                "id": leave["id"],
-                "type": leave["leave_types"]["name"] if leave.get("leave_types") else "Unknown",
-                "start": leave["start_date"],
-                "end": leave["end_date"],
-                "days": leave["total_days"],
-                "status": leave["status"],
-                "reason": leave.get("reason", "")
-            })
-        
-        return {
-            "success": True,
-            "leaves": leaves,
-            "count": len(leaves)
-        }
-    except Exception as e:
-        logger.error(f"get_my_leaves error: {e}")
-        return {"success": False, "error": str(e)}
-
-
-@tool  
-def list_rooms() -> dict:
-    """
-    List all available meeting rooms with details.
-    Call when user asks what rooms are available, bilik mesyuarat, or meeting rooms.
-    
-    Returns:
-        List of rooms with name, capacity, location and amenities
-    """
-    try:
-        supabase = get_supabase_client()
-        result = supabase.table("rooms").select("*").eq("is_active", True).execute()
-        
-        rooms = []
-        for room in result.data:
-            rooms.append({
-                "id": room["id"],
-                "name": room["name"],
-                "capacity": room.get("capacity", "N/A"),
-                "location": room.get("location", "N/A"),
-                "amenities": room.get("amenities", [])
-            })
-        
-        return {"success": True, "rooms": rooms, "count": len(rooms)}
-    except Exception as e:
-        logger.error(f"list_rooms error: {e}")
-        return {"success": False, "error": str(e)}
-
-
-@tool
-def check_room_availability(room_name: str, date: str, start_time: str, end_time: str) -> dict:
-    """
-    Check if a room is available at specified time.
-    Call before booking to verify availability.
-    
-    Args:
-        room_name: Name of the room to check
-        date: Date to check YYYY-MM-DD
-        start_time: Start time HH:MM
-        end_time: End time HH:MM
-    
-    Returns:
-        Availability status and any conflicts
-    """
-    try:
-        supabase = get_supabase_client()
-        
-        # Find room
-        room_result = supabase.table("rooms").select("*").ilike("name", f"%{room_name}%").execute()
-        if not room_result.data:
-            return {"success": False, "error": f"Room '{room_name}' not found"}
-        
-        room = room_result.data[0]
-        
-        # Build datetime strings
-        start_dt = f"{date}T{start_time}:00"
-        end_dt = f"{date}T{end_time}:00"
-        
-        # Check conflicts
-        bookings = supabase.table("room_bookings").select("*").eq(
-            "room_id", room["id"]
-        ).eq("status", "confirmed").execute()
-        
-        conflicts = []
-        for booking in bookings.data:
-            b_start = booking["start_time"][:16]
-            b_end = booking["end_time"][:16]
-            
-            # Simple overlap check
-            if not (end_dt <= b_start or start_dt >= b_end):
-                conflicts.append({
-                    "title": booking["title"],
-                    "time": f"{b_start} - {b_end}"
-                })
-        
-        if conflicts:
-            return {
-                "success": True,
-                "available": False,
-                "room": room["name"],
-                "conflicts": conflicts,
-                "suggestion": "Try a different time slot"
-            }
-        
-        return {
-            "success": True,
-            "available": True,
-            "room": room["name"],
-            "time_slot": f"{start_time} - {end_time}"
-        }
-    except Exception as e:
-        logger.error(f"check_room_availability error: {e}")
-        return {"success": False, "error": str(e)}
-
-
-@tool
-def book_room(
-    user_id: str,
-    room_name: str,
-    title: str,
-    date: str,
-    start_time: str,
-    end_time: str,
-    description: str = ""
-) -> dict:
-    """
-    Book a meeting room.
-    Call when user wants to book/reserve a room for meeting.
-    
-    Args:
-        user_id: The user's UUID
-        room_name: Name of the room
-        title: Meeting title/purpose
-        date: Date YYYY-MM-DD
-        start_time: Start time HH:MM (24h format)
-        end_time: End time HH:MM (24h format)
-        description: Optional meeting description
-    
-    Returns:
-        Booking confirmation with details
-    """
-    try:
-        supabase = get_supabase_client()
-        
-        # Find room
-        room_result = supabase.table("rooms").select("*").ilike("name", f"%{room_name}%").execute()
-        if not room_result.data:
-            all_rooms = supabase.table("rooms").select("name").execute()
-            room_names = [r["name"] for r in all_rooms.data]
-            return {
-                "success": False, 
-                "error": f"Room '{room_name}' not found",
-                "available_rooms": room_names
-            }
-        
-        room = room_result.data[0]
-        
-        # Build datetime
-        start_dt = f"{date}T{start_time}:00"
-        end_dt = f"{date}T{end_time}:00"
-        
-        # Validate time
-        if start_time >= end_time:
-            return {"success": False, "error": "End time must be after start time"}
-        
-        # Check conflicts
-        bookings = supabase.table("room_bookings").select("*").eq(
-            "room_id", room["id"]
-        ).eq("status", "confirmed").execute()
-        
-        for booking in bookings.data:
-            b_start = booking["start_time"][:16]
-            b_end = booking["end_time"][:16]
-            if not (end_dt <= b_start or start_dt >= b_end):
-                return {
-                    "success": False,
-                    "error": f"Room already booked: {booking['title']} ({b_start} - {b_end})"
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "book_room",
+            "description": "Book a room. SENSITIVE: Needs confirmation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "room_name": {"type": "string"},
+                    "date": {"type": "string"},
+                    "start_time": {"type": "string"},
+                    "end_time": {"type": "string"},
+                    "purpose": {"type": "string"}
                 }
-        
-        # Create booking
-        new_booking = {
-            "room_id": room["id"],
-            "user_id": user_id,
-            "title": title,
-            "start_time": start_dt,
-            "end_time": end_dt,
-            "description": description,
-            "status": "confirmed"
-        }
-        
-        result = supabase.table("room_bookings").insert(new_booking).execute()
-        
-        return {
-            "success": True,
-            "message": "✅ Room booked successfully!",
-            "details": {
-                "room": room["name"],
-                "title": title,
-                "date": date,
-                "time": f"{start_time} - {end_time}",
-                "booking_id": result.data[0]["id"] if result.data else None
             }
         }
-    except Exception as e:
-        logger.error(f"book_room error: {e}")
-        return {"success": False, "error": str(e)}
-
-
-@tool
-def get_my_bookings(user_id: str) -> dict:
-    """
-    Get user's room bookings.
-    Call when user asks about their bookings or scheduled meetings.
-    
-    Args:
-        user_id: The user's UUID
-    
-    Returns:
-        List of upcoming and recent bookings
-    """
-    try:
-        supabase = get_supabase_client()
-        
-        result = supabase.table("room_bookings").select(
-            "*, rooms(name)"
-        ).eq("user_id", user_id).order("start_time", desc=True).limit(10).execute()
-        
-        bookings = []
-        for b in result.data:
-            bookings.append({
-                "room": b["rooms"]["name"] if b.get("rooms") else "Unknown",
-                "title": b["title"],
-                "start": b["start_time"],
-                "end": b["end_time"],
-                "status": b["status"]
-            })
-        
-        return {"success": True, "bookings": bookings, "count": len(bookings)}
-    except Exception as e:
-        logger.error(f"get_my_bookings error: {e}")
-        return {"success": False, "error": str(e)}
-
-
-@tool
-def get_claim_categories() -> dict:
-    """
-    Get available expense claim categories with limits.
-    Call when user asks about claim types or expense categories.
-    
-    Returns:
-        List of categories with max amounts
-    """
-    try:
-        supabase = get_supabase_client()
-        result = supabase.table("claim_categories").select("*").eq("is_active", True).execute()
-        
-        categories = []
-        for cat in result.data:
-            categories.append({
-                "id": cat["id"],
-                "name": cat["name"],
-                "max_amount": float(cat["max_amount"]) if cat.get("max_amount") else None,
-                "description": cat.get("description", "")
-            })
-        
-        return {"success": True, "categories": categories}
-    except Exception as e:
-        logger.error(f"get_claim_categories error: {e}")
-        return {"success": False, "error": str(e)}
-
-
-@tool
-def submit_claim(
-    user_id: str,
-    category: str,
-    amount: float,
-    description: str
-) -> dict:
-    """
-    Submit an expense claim.
-    Call when user wants to claim expenses, submit claim, or reimburse.
-    
-    Args:
-        user_id: The user's UUID
-        category: Category name - Transport, Meals, Parking, etc
-        amount: Claim amount in RM
-        description: What the expense was for
-    
-    Returns:
-        Claim submission result
-    """
-    try:
-        supabase = get_supabase_client()
-        
-        # Find category
-        cat_result = supabase.table("claim_categories").select("*").ilike("name", f"%{category}%").execute()
-        if not cat_result.data:
-            all_cats = supabase.table("claim_categories").select("name, max_amount").execute()
-            return {
-                "success": False,
-                "error": f"Category '{category}' not found",
-                "available_categories": [
-                    {"name": c["name"], "max": c.get("max_amount")} 
-                    for c in all_cats.data
-                ]
-            }
-        
-        cat = cat_result.data[0]
-        
-        # Check max amount
-        max_amount = cat.get("max_amount")
-        if max_amount and amount > float(max_amount):
-            return {
-                "success": False,
-                "error": f"Amount RM{amount:.2f} exceeds limit",
-                "max_allowed": float(max_amount),
-                "suggestion": f"Maximum for {cat['name']} is RM{float(max_amount):.2f}"
-            }
-        
-        if amount <= 0:
-            return {"success": False, "error": "Amount must be positive"}
-        
-        # Create claim
-        new_claim = {
-            "user_id": user_id,
-            "category_id": cat["id"],
-            "amount": amount,
-            "description": description,
-            "claim_date": date.today().isoformat(),
-            "status": "pending"
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_claim_status",
+            "description": "Check pending claims."
         }
-        
-        result = supabase.table("claims").insert(new_claim).execute()
-        
-        return {
-            "success": True,
-            "message": "✅ Claim submitted!",
-            "details": {
-                "category": cat["name"],
-                "amount": f"RM{amount:.2f}",
-                "description": description,
-                "status": "pending",
-                "claim_id": result.data[0]["id"] if result.data else None
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_transport_options",
+            "description": "Check available transport vehicles (Van, MPV, Sedan)."
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "book_transport",
+            "description": "Book a transport vehicle. SENSITIVE: Needs confirmation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "vehicle_type": {"type": "string"},
+                    "destination": {"type": "string"},
+                    "date": {"type": "string"},
+                    "time": {"type": "string"},
+                    "reason": {"type": "string"}
+                },
+                "required": ["vehicle_type", "destination", "date", "time", "reason"]
             }
         }
-    except Exception as e:
-        logger.error(f"submit_claim error: {e}")
-        return {"success": False, "error": str(e)}
-
-
-@tool
-def get_my_claims(user_id: str, status: str = "all") -> dict:
-    """
-    Get user's expense claims history.
-    Call when user asks about their claims, pending reimbursements, or past expenses.
-    
-    Args:
-        user_id: The user's UUID
-        status: Filter - all, pending, approved, rejected
-    
-    Returns:
-        List of claims with details
-    """
-    try:
-        supabase = get_supabase_client()
-        
-        query = supabase.table("claims").select(
-            "*, claim_categories(name)"
-        ).eq("user_id", user_id).order("created_at", desc=True).limit(10)
-        
-        if status != "all":
-            query = query.eq("status", status)
-        
-        result = query.execute()
-        
-        claims = []
-        total_pending = 0
-        for claim in result.data:
-            amount = float(claim["amount"])
-            if claim["status"] == "pending":
-                total_pending += amount
-            claims.append({
-                "category": claim["claim_categories"]["name"] if claim.get("claim_categories") else "Unknown",
-                "amount": f"RM{amount:.2f}",
-                "description": claim.get("description", ""),
-                "date": claim["claim_date"],
-                "status": claim["status"]
-            })
-        
-        return {
-            "success": True,
-            "claims": claims,
-            "count": len(claims),
-            "total_pending": f"RM{total_pending:.2f}"
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_daily_menu",
+            "description": "Get today's cafe menu at Chin Hin office."
         }
-    except Exception as e:
-        logger.error(f"get_my_claims error: {e}")
-        return {"success": False, "error": str(e)}
-
-
-@tool
-def get_today_info() -> dict:
-    """
-    Get current date and time info.
-    Call when you need to know today's date for relative date calculations.
-    
-    Returns:
-        Current date, day of week, and time info
-    """
-    now = datetime.now()
-    return {
-        "date": now.strftime("%Y-%m-%d"),
-        "day": now.strftime("%A"),
-        "time": now.strftime("%H:%M"),
-        "year": now.year,
-        "month": now.strftime("%B"),
-        "week_number": now.isocalendar()[1]
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_energy_consumption",
+            "description": "Get monthly energy consumption data for the office.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "month": {"type": "string"}
+                }
+            }
+        }
     }
-
-
-@tool
-def search_policy(query: str) -> dict:
-    """
-    Search company handbook/policies (RAG).
-    Call this when user asks about rules, benefits, MC limits, working hours, etc.
-    
-    Args:
-        query: Search query in English or Malay
-    
-    Returns:
-        Relevant policy snippets
-    """
-    logger.info(f"🔍 AI is searching policy for: {query}")
-    print(f"\n[DEBUG] search_policy query: {query}")
-    
-    try:
-        from app.services.embedding_service import get_embedding_service
-        import asyncio
-        
-        # Get embedding
-        embedding_service = get_embedding_service()
-        
-        # Safely run async code in sync context
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-        if loop.is_running():
-            # If we are in a loop (like FastAPI), we need a different approach
-            # Using a trick to run async in running loop for simple call
-            import nest_asyncio
-            nest_asyncio.apply()
-            vector = asyncio.run(embedding_service.get_embeddings(query))
-        else:
-            vector = loop.run_until_complete(embedding_service.get_embeddings(query))
-        
-        if not vector:
-            print("[DEBUG] ❌ Failed to generate vector")
-            return {"success": False, "error": "Gagal menjana carian AI. Cuba lagi jap lagi."}
-            
-        print(f"[DEBUG] ✅ Vector generated (len: {len(vector)})")
-        
-        supabase = get_supabase_client()
-        result = supabase.rpc("match_knowledge_base", {
-            "query_embedding": vector,
-            "match_threshold": 0.4, # Lowered slightly for better recall
-            "match_count": 5        # Increased count
-        }).execute()
-        
-        if not result.data:
-            print("[DEBUG] ⚠️ No results found in Supabase")
-            return {"success": True, "info": "Tiada polisi dijumpai berkaitan query tersebut dalam handbook."}
-            
-        snippets = []
-        for r in result.data:
-            snippets.append({
-                "content": r["content"],
-                "similarity": round(r.get("similarity", 0) * 100, 1)
-            })
-            
-        print(f"[DEBUG] ✅ Found {len(snippets)} results")
-        return {
-            "success": True, 
-            "results": snippets,
-            "count": len(snippets)
-        }
-    except Exception as e:
-        logger.error(f"search_policy error: {e}")
-        print(f"[DEBUG] ❌ Error in search_policy: {e}")
-        return {"success": False, "error": str(e)}
-
-
-@tool
-def get_my_nudges(user_id: str) -> dict:
-    """
-    Get proactive reminders/notifications for the user.
-    Call this to check if there are pending actions, reminders, or system alerts.
-    
-    Args:
-        user_id: The user's UUID
-        
-    Returns:
-        List of active nudges
-    """
-    try:
-        supabase = get_supabase_client()
-        result = supabase.table("nudges").select("*").eq("user_id", user_id).eq("is_read", False).execute()
-        
-        nudges = []
-        for n in result.data:
-            nudges.append({
-                "id": n["id"],
-                "type": n["type"],
-                "title": n["title"],
-                "content": n["content"],
-                "created_at": n["created_at"]
-            })
-            
-        return {
-            "success": True, 
-            "nudges": nudges,
-            "count": len(nudges)
-        }
-    except Exception as e:
-        logger.error(f"get_my_nudges error: {e}")
-        return {"success": False, "error": str(e)}
-
-
-# ================================================
-# ALL TOOLS
-# ================================================
-
-ALL_TOOLS = [
-    get_leave_balance,
-    apply_leave,
-    get_my_leaves,
-    list_rooms,
-    check_room_availability,
-    book_room,
-    get_my_bookings,
-    get_claim_categories,
-    submit_claim,
-    get_my_claims,
-    get_today_info,
-    search_policy,
-    get_my_nudges,
 ]
 
+SENSITIVE_TOOLS = ["apply_leave", "book_room", "book_transport"]
 
 # ================================================
-# SYSTEM PROMPT
+# CARD DATA GENERATORS (for interactive UI cards)
 # ================================================
 
-SYSTEM_PROMPT = """Kau Chin Hin AI Assistant aka "Bestie" office. BM/EN sempoi, Gen Z vibe (guna emoji, slang macam cun, ngam, bestie). 🤖✨
+def _get_card_action(fn_name: str, fn_args: dict) -> Optional[dict]:
+    """Returns structured card data for info tools to render interactive UI cards."""
+    if fn_name in ("get_all_leave_balances", "check_leave_balance"):
+        store = get_store()
+        uid = _user_ctx.get()
+        return {
+            "type": "leave_balance_card",
+            "balances": store.get_leave_balances(uid),
+            "quick_replies": [
+                "Apply Annual Leave 🏖️",
+                "Apply Medical Leave 💊",
+                "Apply Emergency Leave 🚨"
+            ]
+        }
+    elif fn_name == "get_transport_options":
+        store = get_store()
+        return {
+            "type": "vehicle_picker",
+            "vehicles": store.transport_fleet,
+        }
+    elif fn_name == "get_daily_menu":
+        store = get_store()
+        today = datetime.now().strftime("%A")
+        return {
+            "type": "menu_card",
+            "day": today,
+            "menu": store.daily_menu.get(today, "Menu belum update untuk hari ni 😋")
+        }
+    elif fn_name == "get_energy_consumption":
+        store = get_store()
+        month = fn_args.get("month", "March")
+        return {
+            "type": "energy_card",
+            "current_month": month,
+            "current_usage": store.energy_stats.get(month, 0),
+            "all_stats": store.energy_stats
+        }
+    elif fn_name == "check_claim_status":
+        store = get_store()
+        uid = _user_ctx.get()
+        return {
+            "type": "claims_card",
+            "claims": store.get_claims(uid)
+        }
+    elif fn_name == "check_room_availability":
+        room = fn_args.get("room_name", "bilik ini")
+        return {
+            "type": "quick_replies",
+            "replies": [
+                f"Book {room} sekarang ✅",
+                "Check masa lain 🕐",
+                "Check bilik lain 🏢"
+            ]
+        }
+    return None
 
-VIBE:
-- Relax tapi pro. Jangan skema sangat. 🤙
-- Guna "Bestie", "Beb", "Bro" atau "Sis" ikut kesesuaian.
+# ================================================
+# AGENT MANAGER
+# ================================================
 
-RULES:
-1. TOOLS IS KING: JANGAN ASUMME. Guna tools untuk check data.
-2. USER_ID: Dah ada dalam context, jangan tanya lagi. Terus buat kerja.
-3. EYES: Boleh "tengok" resit/invoice. Extract baki, merchant, date untuk claim submission.
-4. KNOWLEDGE: Guna search_policy untuk apa-apa soalan pasal handbook/rules Chin Hin.
-5. PROACTIVE: Kalau nampak unread notifications, "menyampit" sikit kat user sebagai friendly reminder.
-6. ERROR: Kalau tool fail, explain chill-chill & suggest plan B.
-7. CONFIRM: Confirm setiap action dengan details yang clear.
+class ChatAgentManager:
+    def __init__(self):
+        self._settings = None
+        self._client = None
+        self.system_prompt = """# Role & Persona
+Kau adalah "CHEA" (Chin Hin Employee Assistant) — AI assistant yang smart, helpful, dan friendly untuk semua staff Chin Hin Group! 🚀
 
-TOOLS: Leave (balance/apply/history), Rooms (list/book), Claims (submit/history), Policy (search), Date info, Nudges (list).
+## Personality
+- Tone: Professional tapi conversational. Guna Gen Z casual dalam Bahasa Melayu. Emoji bila sesuai (🚀, 🚐, 🍽️, ⚡).
+- Bahasa: Utama Bahasa Melayu, mix dengan English secara natural dan Gen Z.
+- Jangan over-formal. Cakap macam bestie kat office yang bijak.
+
+## ⚠️ CRITICAL: Context Retention (MOST IMPORTANT RULE)
+Kau MESTI ingat context dari mesej-mesej sebelum ini dalam conversation:
+- Kalau user sedang dalam proses apply leave, dan dia hantar tarikh atau maklumat lain → ANGGAP ia untuk leave tu, JANGAN tanya balik tujuan.
+- Kalau user sedang proses book transport dan dia hantar tarikh → ANGGAP untuk transport booking tu.
+- Kalau kau dah tanya soalan spesifik (e.g., "Tarikh mula?") dan user reply dengan tarikh → TERUS sambung, jangan minta penjelasan lagi.
+- NEVER reset conversation context. Kalau user bagi info step by step, kumpul info tu sampai lengkap.
+- Kalau rasa context lost, refer balik ke mesej awal conversation, bukan tanya dari scratch.
+
+## Thinking Process (Chain of Thought)
+ALWAYS fikir step-by-step sebelum jawab:
+1. **Analisis**: Tengok full conversation history. Apa yang user nak dari AWAL? Jangan judge dari mesej terakhir je.
+2. **Context Check**: Ada ongoing request ke? (e.g., tengah gather dates untuk leave, atau destination untuk transport?)
+3. **Info Gathering**: Kalau info masih tak lengkap, tanya SATU soalan je pada satu masa. Jangan tanya semua sekali gus.
+4. **Tool Decision**: Bila semua info dah ada → call tool.
+   - SENSITIVE (apply_leave, book_room, book_transport): MESTI call tool, biar sistem tunjuk confirmation card.
+   - TIDAK SENSITIVE (check_leave_balance, get_daily_menu, dll): Execute terus.
+5. **Response**: Ringkas, friendly, actionable.
+
+## Implementation Modules & Tools
+
+### 1. Leave Management 🏖️
+- Tools: `check_leave_balance` (immediate), `apply_leave` (SENSITIVE).
+- Logic: Check baki cuti dulu sebelum apply. Kumpul: leave_type, start_date, end_date, reason. Bila dah lengkap, CALL `apply_leave`.
+- **Gather info satu soalan masa**: Tanya leave_type dulu → then start_date → then end_date → then reason.
+
+### 2. Room Booking 🏢
+- Tools: `check_room_availability` (immediate), `book_room` (SENSITIVE).
+- Kumpul: room_name, date, start_time, end_time, purpose.
+
+### 3. Transport Booking 🚐
+- Tools: `get_transport_options` (immediate), `book_transport` (SENSITIVE).
+- Kumpul: vehicle_type, destination, date, time, reason.
+- MESTI tanya destination kalau takde.
+
+### 4. Daily Menu 🍛
+- Tool: `get_daily_menu` (immediate).
+
+### 5. Energy Consumption ⚡
+- Tool: `get_energy_consumption` (immediate).
+
+### 6. Claims 💸
+- Tool: `check_claim_status` (immediate).
+
+## Human-in-the-Loop (HITL) Logic 🛡️
+Untuk SENSITIVE tools:
+1. CALL THE TOOL — jangan execute dalam kepala kau.
+2. Selepas call: "Okay, aku dah sediakan details. Kau check dulu kat card bawah ni, kalau betul tekan 'Confirm' k? 😎"
+3. TUNGGU user click button.
+
+## Guardrails
+- Kalau user cakap "Confirm" / "Proceed" → acknowledge dan process.
+- Kalau user cakap "Cancel" → stop dan inform.
+- ONLY guna tools yang provided. JANGAN hallucinate data.
+- Semua date format: YYYY-MM-DD, time format: HH:MM.
+- Jangan tanya soalan yang dah user jawab dalam mesej sebelumnya.
 """
 
+    @property
+    def settings(self):
+        if self._settings is None:
+            self._settings = get_settings()
+        return self._settings
 
-# Token optimization: limit conversation history
-MAX_HISTORY_MESSAGES = 6  # Keep last 6 messages (3 turns)
+    @property
+    def client(self):
+        if self._client is None:
+            self._client = AzureOpenAI(
+                api_key=self.settings.azure_openai_api_key,
+                azure_endpoint=self.settings.azure_openai_endpoint,
+                api_version=self.settings.azure_openai_api_version
+            )
+        return self._client
 
-
-# ================================================
-# MODEL ROTATION CONFIG 🔄
-# ================================================
-
-# ALL models to try (ordered by preference) - each has separate quota!
-MODELS_TO_TRY = [
-    # Gemini Flash family (best for agentic)
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite", 
-    "gemini-2.0-flash",
-    
-    # Gemma models (separate quota, may not support all tools)
-    "gemma-3-27b-it",
-    "gemma-3-12b-it", 
-    "gemma-3-4b-it",
-    "gemma-3-2b-it",
-]
-
-# Track current model/key index (persistent across requests)
-_current_model_index = 0
-_current_key_index = 0
-_failed_models = set()  # Track models that failed this session
-
-
-def get_next_model_config():
-    """Get next available model with API key rotation, skipping failed models."""
-    global _current_model_index, _current_key_index
-    
-    settings = get_settings()
-    api_keys = settings.gemini_api_key_list
-    
-    if not api_keys:
-        raise ValueError("No Gemini API keys configured!")
-    
-    # Find next model that hasn't failed
-    attempts = 0
-    while attempts < len(MODELS_TO_TRY):
-        model = MODELS_TO_TRY[_current_model_index % len(MODELS_TO_TRY)]
-        if model not in _failed_models:
-            api_key = api_keys[_current_key_index % len(api_keys)]
-            return model, api_key
-        _current_model_index += 1
-        attempts += 1
-    
-    # All models failed, reset and try with next key
-    _failed_models.clear()
-    _current_key_index += 1
-    if _current_key_index >= len(api_keys):
-        _current_key_index = 0
-        logger.warning("⚠️ All models and API keys exhausted! Resetting...")
-    
-    model = MODELS_TO_TRY[0]
-    api_key = api_keys[_current_key_index % len(api_keys)]
-    return model, api_key
-
-
-def rotate_to_next_model(failed_model: str = None):
-    """Rotate to next model, marking current as failed."""
-    global _current_model_index, _current_key_index, _failed_models
-    
-    if failed_model:
-        _failed_models.add(failed_model)
-        logger.info(f"❌ Marked model as failed: {failed_model}")
-    
-    _current_model_index += 1
-    
-    model, api_key = get_next_model_config()
-    logger.info(f"🔄 Rotated to model: {model} (failed: {len(_failed_models)}/{len(MODELS_TO_TRY)})")
-    return model, api_key
-
-
-def reset_model_rotation():
-    """Reset rotation state (call at start of each request)."""
-    global _failed_models
-    # Don't reset - keep tracking failed models until quota resets
-    pass
-
-
-# ================================================
-# AGENT GRAPH WITH ROTATION
-# ================================================
-
-def create_agent(model_name: str = None, api_key: str = None):
-    """Create the LangGraph agent with specified or default model."""
-    # Use provided or get from rotation
-    if not model_name or not api_key:
-        model_name, api_key = get_next_model_config()
-    
-    logger.info(f"🤖 Creating agent with model: {model_name}")
-    
-    # Configure google genai with NO retry
-    genai.configure(
-        api_key=api_key,
-    )
-    
-    # Initialize LLM with DISABLED built-in retry
-    llm = ChatGoogleGenerativeAI(
-        model=model_name,
-        google_api_key=api_key,
-        temperature=0.7,
-        convert_system_message_to_human=True,
-        max_retries=0,      # Disable langchain retry
-        timeout=15,         # 15 second timeout (min 10s required)
-        max_output_tokens=2048,  # Limit output for speed
-    )
-    
-    # Bind tools
-    llm_with_tools = llm.bind_tools(ALL_TOOLS)
-    
-    # Define nodes
-    def agent_node(state: AgentState) -> dict:
-        """Main agent reasoning node."""
-        messages = list(state["messages"])
-        user_id = state.get("user_id", "Unknown")
+    def process_chat(self, history: List[Dict], user_id: str) -> Dict[str, Any]:
+        client = self.client
+        deployment = self.settings.azure_openai_deployment
         
-        # dynamic system prompt with user identity
-        current_system_prompt = f"{SYSTEM_PROMPT}\n\nCURRENT USER ID: {user_id}\nGunakan ID ini untuk semua tool calls yang memerlukan user_id."
-        
-        # Add system message if not present or update it
-        system_msg_index = -1
-        for i, m in enumerate(messages):
-            if isinstance(m, SystemMessage):
-                system_msg_index = i
-                break
-        
-        if system_msg_index != -1:
-            messages[system_msg_index] = SystemMessage(content=current_system_prompt)
-        else:
-            messages = [SystemMessage(content=current_system_prompt)] + messages
-        
-        # Sliding window: keep only recent messages (token optimization)
-        # IMPORTANT: Must preserve paired messages (AIMessage with tool_calls + ToolMessage)
-        if len(messages) > MAX_HISTORY_MESSAGES + 1:  # +1 for system msg
-            system_msg = messages[0]
-            recent_msgs = messages[-(MAX_HISTORY_MESSAGES):]
+        # 1. Detect Confirmation (More robust check)
+        last_msg = history[-1]["content"].lower()
+        keywords = ["confirm", "yes", "jadi", "boleh", "proceed", "teruskan", "setuju"]
+        is_confirmation = any(word in last_msg for word in keywords)
+
+        store = get_store()
+        if is_confirmation and store.has_pending(user_id):
+            pending = store.pop_pending(user_id)
+            tool_name = pending["name"]
+            tool_args = pending["args"]
             
-            # Ensure we don't start with a ToolMessage (orphan response)
-            # Find safe starting point - should be HumanMessage or clean AIMessage
-            safe_start = 0
-            for i, m in enumerate(recent_msgs):
-                if isinstance(m, ToolMessage):
-                    safe_start = i + 1  # Skip orphan tool messages
-                elif isinstance(m, AIMessage) and hasattr(m, 'tool_calls') and m.tool_calls:
-                    # Check if corresponding ToolMessage exists after this
-                    has_response = False
-                    for j in range(i + 1, len(recent_msgs)):
-                        if isinstance(recent_msgs[j], ToolMessage):
-                            has_response = True
-                            break
-                        if isinstance(recent_msgs[j], HumanMessage):
-                            break
-                    if not has_response:
-                        safe_start = i + 1  # Skip orphan tool calls
+            logger.info(f"✅ User Confirmed! Executing {tool_name}")
+            
+            fn_map = {
+                "apply_leave": apply_leave,
+                "book_room": book_room,
+                "book_transport": book_transport
+            }
+            result = fn_map[tool_name](**tool_args)
+            return {"response": result, "actions": []}
+
+        # 2. Main AI Loop
+        try:
+            response = client.chat.completions.create(
+                model=deployment,
+                messages=history,
+                tools=TOOLS,
+                tool_choice="auto"
+            )
+        except BadRequestError as e:
+            # Handle Azure content filter gracefully
+            error_body = e.response.json() if hasattr(e, 'response') else {}
+            inner = error_body.get('error', {}).get('innererror', {})
+            if inner.get('code') == 'ResponsibleAIPolicyViolation':
+                logger.warning(f"⚠️ Azure content filter triggered: {inner}")
+                return {
+                    "response": "Alamak, soalan kau terkena content filter Azure OpenAI. Cuba ayat semula dengan cara yang lebih neutral ya bestie. 🙏",
+                    "actions": []
+                }
+            raise
+        
+        ai_msg = response.choices[0].message
+        
+        if ai_msg.tool_calls:
+            actions = []
+            for tool_call in ai_msg.tool_calls:
+                fn_name = tool_call.function.name
+                fn_args = json.loads(tool_call.function.arguments)
+                
+                # Check for sensitive tools
+                if fn_name in SENSITIVE_TOOLS:
+                    # Store as pending
+                    get_store().set_pending(user_id, {"name": fn_name, "args": fn_args})
+                    actions.append({
+                        "type": "confirmation",
+                        "tool": fn_name,
+                        "args": fn_args,
+                        "prompt": f"Betul ke nak {fn_name.replace('_', ' ')} ni? Sila tekan Confirm kat bawah k? ✨"
+                    })
                 else:
-                    break
+                    # Execute immediate
+                    fn_map = {
+                        "get_all_leave_balances": get_all_leave_balances,
+                        "check_leave_balance": check_leave_balance,
+                        "check_room_availability": check_room_availability,
+                        "check_claim_status": check_claim_status,
+                        "get_transport_options": get_transport_options,
+                        "get_daily_menu": get_daily_menu,
+                        "get_energy_consumption": get_energy_consumption
+                    }
+                    if fn_name in fn_map:
+                        result = fn_map[fn_name](**fn_args)
+                        card_action = _get_card_action(fn_name, fn_args)
+                        card_actions = [card_action] if card_action else []
+                        return {"response": result, "actions": card_actions}
             
-            messages = [system_msg] + recent_msgs[safe_start:]
-        
-        response = llm_with_tools.invoke(messages)
-        return {"messages": [response]}
-    
-    def should_continue(state: AgentState) -> Literal["tools", "end"]:
-        """Decide whether to use tools or end."""
-        messages = state["messages"]
-        last_message = messages[-1]
-        
-        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-            return "tools"
-        return "end"
-    
-    def tool_node(state: AgentState) -> dict:
-        """Execute tools and track actions."""
-        messages = state["messages"]
-        last_message = messages[-1]
-        
-        actions = state.get("actions_taken", [])
-        tool_node_executor = ToolNode(ALL_TOOLS)
-        
-        # Execute tools
-        result = tool_node_executor.invoke(state)
-        
-        # Track actions
-        if hasattr(last_message, "tool_calls"):
-            for tc in last_message.tool_calls:
-                actions.append({
-                    "tool": tc["name"],
-                    "args": tc.get("args", {}),
-                })
-        
-        return {
-            "messages": result["messages"],
-            "actions_taken": actions
-        }
-    
-    # Build graph
-    workflow = StateGraph(AgentState)
-    
-    workflow.add_node("agent", agent_node)
-    workflow.add_node("tools", tool_node)
-    
-    workflow.set_entry_point("agent")
-    
-    workflow.add_conditional_edges(
-        "agent",
-        should_continue,
-        {
-            "tools": "tools",
-            "end": END,
-        }
-    )
-    
-    workflow.add_edge("tools", "agent")  # Loop back after tools
-    
-    # Compile with memory
-    memory = MemorySaver()
-    app = workflow.compile(checkpointer=memory)
-    
-    return app
+            if actions:
+                # Get the content from AI msg if it exists, otherwise use a generic prompt
+                content = ai_msg.content or f"Ok bestie, aku dah plan nak {actions[0]['tool'].replace('_', ' ')}. Tapi kena verify dulu k? ✨"
+                return {
+                    "response": content,
+                    "actions": actions
+                }
 
+        return {"response": ai_msg.content, "actions": []}
+
+_manager = ChatAgentManager()
 
 # ================================================
-# GLOBAL AGENT INSTANCE
+# MAIN INTERFACE
 # ================================================
 
-_agent = None
-_agent_model = None  # Track which model the current agent uses
-
-
-def get_agent(force_new: bool = False):
-    """Get or create agent instance."""
-    global _agent, _agent_model
-    
-    current_model, current_key = get_next_model_config()
-    
-    # Recreate if model changed or forced
-    if _agent is None or force_new or _agent_model != current_model:
-        _agent = create_agent(current_model, current_key)
-        _agent_model = current_model
-        
-    return _agent
-
-
-def is_retryable_error(error: Exception) -> bool:
-    """Check if error should trigger model rotation (quota, rate limit, or model not found)."""
-    error_str = str(error).lower()
-    return any(x in error_str for x in [
-        "quota", "rate_limit", "resource_exhausted", 
-        "429", "too many requests", "exceeded",
-        "not_found", "404", "not found"  # Also rotate on model not found
-    ])
-
-
-# # ================================================
-# MAIN INTERFACE (backward compatible)
-# ================================================
-
-MAX_ROTATION_RETRIES = 7  # Try all 7 models before giving up
+_history_cache: Dict[str, List[Dict]] = {}
 
 async def agentic_chat(
     message: str,
     user_id: str,
-    conversation_id: str = "default",
+    conversation_id: str = None,
     history: Optional[list] = None,
     image_data: Optional[str] = None
 ) -> dict:
-    """
-    Main chat function with multi-step reasoning.
-    Backward compatible with existing chat.py interface.
-    
-    Features auto-rotation on quota errors!
-    
-    Args:
-        message: User's message
-        user_id: Current user ID
-        conversation_id: For memory persistence
-        history: Previous messages (optional)
-    
-    Returns:
-        Response dict with 'response' and 'actions' keys
-    """
-    global _agent
-    
-    # Build messages (only once, reuse on retries)
-    messages = []
-    
-    # Proactive: Check for nudges to inject into context
-    try:
-        supabase = get_supabase_client()
-        nudge_result = supabase.table("nudges").select("title, content").eq("user_id", user_id).eq("is_read", False).limit(3).execute()
-        if nudge_result.data:
-            nudge_context = "\n".join([f"- {n['title']}: {n['content']}" for n in nudge_result.data])
-            messages.append(SystemMessage(content=f"IMPORTANT: The user has UNREAD NOTIFICATIONS that require action:\n{nudge_context}\n\nYou MUST proactively mention these to the user in your response (e.g., 'By the way, I noticed you have...'). Do not ignore this context."))
-    except Exception as e:
-        logger.warning(f"Failed to fetch nudges for context: {e}")
+    conv_id = conversation_id or "default"
+    _user_ctx.set(user_id)  # Inject user identity into tool functions via ContextVar
 
+    # Build history — always with system prompt at front
     if history:
-        # Only keep last N messages from history
-        recent_history = history[-(MAX_HISTORY_MESSAGES - 1):] if len(history) > MAX_HISTORY_MESSAGES - 1 else history
-        for h in recent_history:
-            if h.get("role") == "user":
-                meta = h.get("metadata")
-                if meta and meta.get("image_data"):
-                    # Reconstruct multimodal history
-                    content = [
-                        {"type": "text", "text": h["content"]},
-                        {"type": "image_url", "image_url": f"data:image/jpeg;base64,{meta['image_data']}"}
-                    ]
-                    messages.append(HumanMessage(content=content))
-                else:
-                    messages.append(HumanMessage(content=h["content"]))
-            elif h.get("role") == "assistant":
-                messages.append(AIMessage(content=h["content"]))
-    
-    if image_data:
-        # Multimodal message
-        messages.append(HumanMessage(content=[
-            {"type": "text", "text": message},
-            {"type": "image_url", "image_url": f"data:image/jpeg;base64,{image_data}"}
-        ]))
+        # History dari client (Flutter) — check if system prompt already there
+        has_system = any(m.get("role") == "system" for m in history)
+        base = history if has_system else [{"role": "system", "content": _manager.system_prompt}] + history
+        current_history = base + [{"role": "user", "content": message}]
     else:
-        messages.append(HumanMessage(content=message))
+        if conv_id not in _history_cache:
+            _history_cache[conv_id] = [{"role": "system", "content": _manager.system_prompt}]
+        _history_cache[conv_id].append({"role": "user", "content": message})
+        current_history = _history_cache[conv_id]
     
-    # Initial state
-    initial_state = {
-        "messages": messages,
-        "user_id": user_id,
-        "actions_taken": [],
-        "retry_count": 0,
-        "needs_clarification": False,
-        "clarification_question": "",
-    }
-    
-    # Config for memory
-    config = {"configurable": {"thread_id": conversation_id}}
-    
-    # Retry loop with model rotation
-    last_error = None
-    for attempt in range(MAX_ROTATION_RETRIES):
-        try:
-            agent = get_agent(force_new=(attempt > 0))  # Force new on retries
-            current_model, _ = get_next_model_config()
-            
-            logger.info(f"🚀 Attempt {attempt + 1}/{MAX_ROTATION_RETRIES} with model: {current_model}")
-            
-            # Run agent
-            result = agent.invoke(initial_state, config=config)
-            
-            # Extract response
-            final_messages = result["messages"]
-            raw_response = ""
-            for msg in reversed(final_messages):
-                if isinstance(msg, AIMessage) and msg.content:
-                    raw_response = msg.content
-                    break
-            
-            # Format response as string
-            if isinstance(raw_response, list):
-                ai_response = "".join([part.get("text", "") if isinstance(part, dict) else str(part) for part in raw_response])
-            else:
-                ai_response = str(raw_response)
-            
+    try:
+        result = _manager.process_chat(current_history, user_id)
+        response_text = result["response"]
+        actions = result.get("actions", [])
+        
+        if not history:
+            _history_cache[conv_id].append({"role": "assistant", "content": response_text})
+        
+        return {
+            "response": response_text,
+            "actions": actions, 
+            "conversation_id": conv_id
+        }
+        
+    except BadRequestError as e:
+        error_body = e.response.json() if hasattr(e, 'response') else {}
+        inner = error_body.get('error', {}).get('innererror', {})
+        if inner.get('code') == 'ResponsibleAIPolicyViolation':
+            logger.warning(f"⚠️ Content filter triggered at top level: {inner}")
             return {
-                "response": ai_response or "Done! ✅",
-                "actions": result.get("actions_taken", []),
-                "conversation_id": conversation_id,
-                "model_used": current_model  # Include which model was used
+                "response": "Alamak, soalan kau terkena content filter Azure OpenAI. Cuba ayat semula dengan cara yang lebih neutral ya bestie. 🙏",
+                "actions": [],
+                "conversation_id": conv_id
             }
-            
-        except Exception as e:
-            last_error = e
-            current_model, _ = get_next_model_config()
-            logger.error(f"Agent error (attempt {attempt + 1}): {e}")
-            
-            # Check if retryable error - if so, rotate and retry
-            if is_retryable_error(e) and attempt < MAX_ROTATION_RETRIES - 1:
-                logger.info(f"🔄 Error detected, rotating from {current_model}...")
-                rotate_to_next_model(current_model)  # Mark this model as failed
-                _agent = None  # Force recreate agent
-                continue
-            else:
-                # Non-quota error or last attempt - give up
-                break
-    
-    # All retries exhausted
-    logger.error(f"All {MAX_ROTATION_RETRIES} attempts failed. Last error: {last_error}")
-    return {
-        "response": f"❌ Alamak, semua model dah exceed quota. Cuba lagi dalam beberapa minit! Error: {str(last_error)}",
-        "actions": [],
-        "error": str(last_error)
-    }
+        logger.error(f"Azure BadRequestError: {e}")
+        return {
+            "response": "❌ Ada masalah dengan AI service sekarang. Cuba sekali lagi ya!",
+            "actions": [],
+            "error": "bad_request"
+        }
+    except Exception as e:
+        logger.error(f"Chat Agent error: {e}")
+        return {
+            "response": "❌ Alamak, ada error jap. Cuba balik sekejap lagi ya! 🙏",
+            "actions": [],
+            "error": str(type(e).__name__)
+        }

@@ -7,7 +7,7 @@
 **Monorepo vibes**: Backend (FastAPI) + Mobile (Flutter) untuk employee self-service app dengan AI chat yang boleh cakap BM/EN! 🇲🇾
 
 ```
-backend/        → FastAPI + Gemini AI + Supabase PostgreSQL
+backend/        → FastAPI + Azure OpenAI + In-Memory Mock State
 mobile/         → Flutter + Riverpod + Dio  
 docs/           → API.md (semua endpoint ada sini)
 ```
@@ -24,7 +24,7 @@ docs/           → API.md (semua endpoint ada sini)
 
 ### Config & Setup
 - **Settings**: [app/config.py](../backend/app/config.py) pakai `pydantic_settings` baca dari `.env`
-- **Env vars wajib**: `SUPABASE_URL`, `SUPABASE_KEY`, `GEMINI_API_KEY`
+- **Env vars wajib**: `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`
 - **Import**: `from app.config import get_settings` → `settings = get_settings()`
 
 ### Nak Run Backend

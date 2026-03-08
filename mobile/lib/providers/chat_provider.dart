@@ -31,12 +31,14 @@ class ChatNotifier extends Notifier<List<Message>> {
     return [
       Message(
         text:
-            "Hi there! I'm your Chin Hin AI Assistant.\n\nI can help you with:\n- Applying Leave 🏖️\n- Booking Rooms 🏢\n- Submitting Claims 💰\n- HR Policies (RAG) 📚\n\nWhat would you like to do today?",
+            "Hai! Aku **CHEA** (Chin Hin Employee Assistant) — AI bestie kau kat office! 🤖✨\n\nAku boleh bantu kau dengan:\n- Semak & Apply Cuti 🏖️\n- Book Meeting Room 🏢\n- Book Transport 🚐\n- Check Menu Cafe Harini 🍛\n- Check Energy Consumption ⚡\n- Submit & Check Claims 💸\n\nNak buat apa harini? Jom! 💪",
         isUser: false,
         timestamp: DateTime.now(),
       ),
     ];
   }
+
+  String? _currentConversationId;
 
   Future<void> sendMessage(String text, {String? imageData}) async {
     if (text.trim().isEmpty && imageData == null) return;
@@ -53,6 +55,17 @@ class ChatNotifier extends Notifier<List<Message>> {
       return;
     }
 
+    // Initialize conversation ID on first message
+    _currentConversationId ??= "conv_${DateTime.now().millisecondsSinceEpoch}";
+
+    // Build history context to send to backend (exclude welcome msg & thinking msg)
+    final historyToSend = state
+        .where((m) => !m.isThinking)
+        .map(
+          (m) => {'role': m.isUser ? 'user' : 'assistant', 'content': m.text},
+        )
+        .toList();
+
     final userMsg = Message(
       text: text,
       isUser: true,
@@ -65,6 +78,7 @@ class ChatNotifier extends Notifier<List<Message>> {
       text: "Thinking... 🤔",
       isUser: false,
       timestamp: DateTime.now(),
+      isThinking: true,
     );
     state = [...state, thinkingMsg];
 
@@ -73,10 +87,13 @@ class ChatNotifier extends Notifier<List<Message>> {
         text,
         userId: userId,
         imageData: imageData,
+        conversationId: _currentConversationId,
+        history: historyToSend,
       );
 
       String aiText =
           "I received your message but I'm not sure how to read the response yet.";
+      List<dynamic>? actions;
 
       if (response.containsKey('response')) {
         aiText = response['response'];
@@ -86,10 +103,19 @@ class ChatNotifier extends Notifier<List<Message>> {
         aiText = response['data']['response'];
       }
 
+      if (response.containsKey('actions')) {
+        actions = response['actions'];
+      }
+
       final newState = [...state];
       newState.removeLast();
       newState.add(
-        Message(text: aiText, isUser: false, timestamp: DateTime.now()),
+        Message(
+          text: aiText,
+          isUser: false,
+          timestamp: DateTime.now(),
+          actions: actions,
+        ),
       );
       state = newState;
     } catch (e) {

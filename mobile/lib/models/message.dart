@@ -12,6 +12,8 @@ class Message {
   final bool isUser;
   final DateTime timestamp;
   final String? imageData;
+  final List<dynamic>? actions;
+  final bool isThinking;
   bool actionExecuted;
 
   Message({
@@ -19,6 +21,8 @@ class Message {
     required this.isUser,
     required this.timestamp,
     this.imageData,
+    this.actions,
+    this.isThinking = false,
     this.actionExecuted = false,
   });
 }

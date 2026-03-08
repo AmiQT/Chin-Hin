@@ -11,7 +11,6 @@
 /// DEPENDENCIES:
 /// - Dio: For fetching ephemeral tokens from the backend.
 /// - WebSocketChannel: For maintaining the persistent connection to Gemini.
-/// - Supabase: For user authentication context.
 ///
 /// KEY COMPONENTS:
 /// - Connection Management: Connects, maintains, and cleanly closes WebSockets.
@@ -28,7 +27,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'package:dio/dio.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../config.dart';
@@ -61,10 +60,11 @@ class LiveVisionService {
   LiveVisionService() {
     _dio.interceptors.add(
       InterceptorsWrapper(
-        onRequest: (options, handler) {
-          final session = Supabase.instance.client.auth.currentSession;
-          if (session != null) {
-            options.headers['Authorization'] = 'Bearer ${session.accessToken}';
+        onRequest: (options, handler) async {
+          final prefs = await SharedPreferences.getInstance();
+          final token = prefs.getString('auth_token');
+          if (token != null) {
+            options.headers['Authorization'] = 'Bearer $token';
           }
           return handler.next(options);
         },

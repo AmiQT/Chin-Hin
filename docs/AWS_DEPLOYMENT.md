@@ -26,7 +26,7 @@ Sebelum start, pastikan ada:
 - ✅ **Cloudflare Account** (free tier okay!)
 - ✅ **SSH Key Pair** untuk EC2 access
 - ✅ **Git Repository** dengan backend code
-- ✅ **Supabase Account** dengan database setup
+- ✅ **Azure OpenAI** credentials
 - ✅ **Gemini API Key** dari Google AI Studio
 
 ---
@@ -204,8 +204,8 @@ nano .env
 
 Update these values:
 ```env
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your-actual-key
+AZURE_OPENAI_API_KEY=your-azure-key
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 GEMINI_API_KEY=your-actual-key
 ALLOWED_ORIGINS=https://api.yourdomain.com
 ```
@@ -366,7 +366,7 @@ curl -v http://localhost:8000/health
 docker-compose ps
 
 # Check environment variables loaded
-docker-compose exec api env | grep SUPABASE
+docker-compose exec api env | grep AZURE
 ```
 
 ### Issue: Cloudflare Tunnel Not Working
@@ -511,7 +511,7 @@ free -h                            # Memory usage
    - Cloudflare handles HTTP/HTTPS
 
 5. **✅ Backups:**
-   - Supabase auto-backup your data
+   - Azure auto-backup berlaku pada platform level
    - Git for code version control
 
 ---

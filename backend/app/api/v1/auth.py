@@ -1,17 +1,43 @@
+"""Auth endpoints - mock local auth, no Supabase."""
+
+import uuid
+import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr
 from typing import Optional
-import logging
 
-from app.db.supabase_client import get_supabase_client
+from app.api.deps import register_token, revoke_token
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 logger = logging.getLogger(__name__)
 
+_MOCK_USERS: dict = {
+    "test@chinhin.com": {
+        "password": "password123",
+        "user_id": "11111111-1111-1111-1111-111111111111",
+        "full_name": "Ahmad Fauzi",
+        "role": "employee",
+        "department": "Operations",
+        "position": "Executive",
+    },
+    "admin@chinhin.com": {
+        "password": "admin123",
+        "user_id": "22222222-2222-2222-2222-222222222222",
+        "full_name": "Siti Rahimah",
+        "role": "admin",
+        "department": "HR",
+        "position": "HR Manager",
+    },
+    "hr@chinhin.com": {
+        "password": "hr123",
+        "user_id": "33333333-3333-3333-3333-333333333333",
+        "full_name": "Razif Hamdan",
+        "role": "hr",
+        "department": "HR",
+        "position": "HR Executive",
+    },
+}
 
-# ================================================
-# REQUEST/RESPONSE MODELS
-# ================================================
 
 class SignUpRequest(BaseModel):
     email: EmailStr
@@ -29,129 +55,43 @@ class AuthResponse(BaseModel):
     message: str
     user_id: Optional[str] = None
     access_token: Optional[str] = None
+    full_name: Optional[str] = None
 
 
-# ================================================
-# AUTH ENDPOINTS
-# ================================================
+class LogoutRequest(BaseModel):
+    access_token: str
+
 
 @router.post("/signup", response_model=AuthResponse)
 async def signup(request: SignUpRequest):
-    """
-    Register a new user with email and password.
-    Profile will be auto-created via database trigger.
-    """
-    supabase = get_supabase_client()
-    
-    try:
-        # Sign up with Supabase Auth
-        response = supabase.auth.sign_up({
-            "email": request.email,
-            "password": request.password,
-            "options": {
-                "data": {
-                    "full_name": request.full_name or request.email.split("@")[0]
-                }
-            }
-        })
-        
-        if response.user:
-            logger.info(f"✅ New user registered: {request.email}")
-            return AuthResponse(
-                message="Account created! 🎉 Check email untuk verify.",
-                user_id=response.user.id,
-                access_token=response.session.access_token if response.session else None
-            )
-        else:
-            raise HTTPException(status_code=400, detail="Signup failed")
-            
-    except Exception as e:
-        logger.error(f"❌ Signup error: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+    if request.email in _MOCK_USERS:
+        raise HTTPException(status_code=400, detail="Email dah didaftarkan!")
+    user_id = str(uuid.uuid4())
+    full_name = request.full_name or request.email.split("@")[0]
+    _MOCK_USERS[request.email] = {"password": request.password, "user_id": user_id, "full_name": full_name, "role": "employee"}
+    token = str(uuid.uuid4())
+    register_token(token, user_id, request.email, full_name, "employee")
+    logger.info(f"New user registered: {request.email}")
+    return AuthResponse(message="Akaun berjaya dibuat!", user_id=user_id, access_token=token, full_name=full_name)
 
 
 @router.post("/login", response_model=AuthResponse)
 async def login(request: SignInRequest):
-    """
-    Sign in with email and password.
-    Returns access token for authenticated requests.
-    """
-    supabase = get_supabase_client()
-    
-    try:
-        response = supabase.auth.sign_in_with_password({
-            "email": request.email,
-            "password": request.password
-        })
-        
-        if response.user and response.session:
-            logger.info(f"✅ User logged in: {request.email}")
-            return AuthResponse(
-                message="Login successful! 🚀",
-                user_id=response.user.id,
-                access_token=response.session.access_token
-            )
-        else:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-            
-    except Exception as e:
-        logger.error(f"❌ Login error: {str(e)}")
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+    user = _MOCK_USERS.get(request.email)
+    if not user or user["password"] != request.password:
+        raise HTTPException(status_code=401, detail="Email atau password salah!")
+    token = str(uuid.uuid4())
+    register_token(token, user["user_id"], request.email, user["full_name"], user.get("role", "employee"))
+    logger.info(f"User logged in: {request.email}")
+    return AuthResponse(message="Login berjaya!", user_id=user["user_id"], access_token=token, full_name=user["full_name"])
 
 
 @router.post("/logout")
-async def logout():
-    """
-    Sign out current user.
-    Note: For stateless JWT, client should discard the token.
-    """
-    supabase = get_supabase_client()
-    
-    try:
-        supabase.auth.sign_out()
-        return {
-            "success": True,
-            "message": "Logged out successfully! 👋"
-        }
-    except Exception as e:
-        logger.error(f"❌ Logout error: {str(e)}")
-        return {
-            "success": True,
-            "message": "Logged out 👋"
-        }
+async def logout(request: LogoutRequest):
+    revoke_token(request.access_token)
+    return {"success": True, "message": "Logout berjaya!"}
 
 
 @router.get("/me")
-async def get_current_user(authorization: Optional[str] = None):
-    """
-    Get current user profile from token.
-    Pass token in Authorization header as 'Bearer <token>'.
-    """
-    supabase = get_supabase_client()
-    
-    try:
-        # Get user from current session
-        user_response = supabase.auth.get_user()
-        
-        if user_response and user_response.user:
-            user = user_response.user
-            
-            # Get profile from users table
-            profile_result = supabase.table("users").select("*").eq("id", user.id).execute()
-            
-            profile = profile_result.data[0] if profile_result.data else {
-                "id": user.id,
-                "email": user.email,
-                "full_name": user.user_metadata.get("full_name", "Unknown")
-            }
-            
-            return {
-                "success": True,
-                "data": profile
-            }
-        else:
-            raise HTTPException(status_code=401, detail="Not authenticated")
-            
-    except Exception as e:
-        logger.error(f"❌ Get user error: {str(e)}")
-        raise HTTPException(status_code=401, detail="Not authenticated")
+async def get_me():
+    return {"success": True, "message": "Auth endpoint aktif"}

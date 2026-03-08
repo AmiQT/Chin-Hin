@@ -11,7 +11,7 @@ One-page reference untuk deploy backend ke AWS EC2 dengan Cloudflare Tunnel.
 ✅ Cloudflare Account (free tier)
 ✅ SSH Key untuk EC2
 ✅ Git repository URL
-✅ Supabase URL + API Key
+✅ Azure OpenAI API Key
 ✅ Gemini API Key
 ```
 
@@ -173,7 +173,7 @@ EC2 t3.small (Ubuntu 22.04)
     ↓ Docker
 FastAPI Backend (:8000)
     ↓ API Calls
-Supabase (PostgreSQL) & Gemini AI
+Azure OpenAI
 ```
 
 ---

@@ -69,7 +69,7 @@ class TestAuthRequired:
     def test_rooms_list_is_public(self, client):
         """Test rooms list is public (for availability check)."""
         response = client.get("/api/v1/rooms")
-        # Rooms list is public, but might still need Supabase connection
+        # Rooms list is public, but might need backend connection
         # Accept either 200 (success) or 500 (DB connection issue in test)
         assert response.status_code in [200, 500]
     
@@ -134,7 +134,7 @@ class TestAuthEndpoints:
             "email": "test@test.com",
             "password": "wrong"
         })
-        # Should return 401 (invalid creds) or 500 (no Supabase), not 404
+        # Should return 401 (invalid creds) or 500 (backend error), not 404
         assert response.status_code in [401, 500]
     
     def test_signup_endpoint_exists(self, client):
@@ -158,7 +158,7 @@ class TestLeaveTypes:
     def test_leave_types_endpoint(self, client):
         """Test leave types list endpoint."""
         response = client.get("/api/v1/leaves/types")
-        # Accept 200 or 500 (Supabase connection in test env)
+        # Accept 200 or 500 (backend connection in test env)
         assert response.status_code in [200, 500]
 
 
@@ -195,7 +195,7 @@ class TestClaimsEndpoints:
     def test_claim_categories_endpoint(self, client):
         """Test claim categories list endpoint."""
         response = client.get("/api/v1/claims/categories")
-        # Accept 200 or 500 (Supabase connection in test env)
+        # Accept 200 or 500 (backend connection in test env)
         assert response.status_code in [200, 500]
     
     def test_claim_submit_requires_auth(self, client):
